@@ -1,0 +1,54 @@
+@page "/Account/Login"
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Identity
+@using CraftHome.Web.Data
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>管理员登录 · CraftHome</PageTitle>
+<section class="login-panel">
+    <h1>欢迎回到你的世界</h1>
+    <p>登录服主账户，管理服务器。</p>
+    @if (errorMessage is not null) { <div class="notice notice-error" role="alert">@errorMessage</div> }
+    <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" FormName="login">
+        <DataAnnotationsValidator />
+        <ValidationSummary class="text-danger" role="alert" />
+        <label for="email">邮箱</label>
+        <InputText @bind-Value="Input.Email" id="email" class="form-control" autocomplete="username" />
+        <label for="password">密码</label>
+        <InputText type="password" @bind-Value="Input.Password" id="password" class="form-control" autocomplete="current-password" />
+        <button type="submit" class="w-100 btn btn-primary mt-4">登录控制台</button>
+    </EditForm>
+    <p class="helper">首次登录信息保存在服务端数据目录的 first-login.txt。此版本不开放公众注册。</p>
+</section>
+
+@code {
+    private string? errorMessage;
+    [CascadingParameter] private HttpContext HttpContext { get; set; } = default!;
+    [SupplyParameterFromForm] private InputModel Input { get; set; } = default!;
+    [SupplyParameterFromQuery] private string? ReturnUrl { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        if (HttpMethods.IsGet(HttpContext.Request.Method))
+            await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
+    }
+
+    private async Task LoginUser()
+    {
+        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, false, lockoutOnFailure: true);
+        if (result.Succeeded) RedirectManager.RedirectTo(ReturnUrl);
+        else if (result.IsLockedOut) errorMessage = "尝试次数过多，请 5 分钟后重试。";
+        else errorMessage = "邮箱或密码不正确。";
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "请填写邮箱。"), EmailAddress(ErrorMessage = "邮箱格式不正确。")]
+        public string Email { get; set; } = "";
+        [Required(ErrorMessage = "请填写密码。"), DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+    }
+}

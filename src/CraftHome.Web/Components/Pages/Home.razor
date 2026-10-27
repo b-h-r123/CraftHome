@@ -1,0 +1,106 @@
+@page "/"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Owner")]
+@rendermode InteractiveServer
+@using CraftHome.Web.Services
+@inject ConnectionStore Connections
+@inject ServerService Servers
+
+<PageTitle>服务器 · CraftHome</PageTitle>
+<div class="page-heading"><div><h1>服务器</h1><p>从这里开始，照顾好你和朋友的世界。</p></div><a class="btn btn-outline-secondary" href="settings">连接设置</a></div>
+@if (connection.DemoMode)
+{
+    <div class="notice">当前为演示模式。操作只改变演示状态，尚未连接或启动真实 Minecraft。<a href="settings">连接你的服务器</a></div>
+}
+@if (message is not null)
+{
+    <div class="notice @(hasError ? "notice-error" : "notice-success")" role="status">@message</div>
+}
+<section class="server-panel" aria-label="服务器控制">
+    <div class="server-heading"><div><h2>@connection.Name</h2><p>@(connection.DemoMode ? "演示实例" : "玩家连接地址") · @connection.Address</p></div><span class="state @(snapshot?.Status == 3 ? "state-running" : "")">@(snapshot?.StatusText ?? "尚未获取状态")</span></div>
+    <div class="server-details">
+        <div><span>游戏响应</span><strong>@(connection.DemoMode ? "演示模式" : snapshot is null ? "待检查" : snapshot.GameResponding ? "查询已响应" : "未确认可连接")</strong></div>
+        <div><span>进程内存</span><strong>@(snapshot?.MemoryBytes is long bytes ? $"{bytes / 1024 / 1024:N0} MB" : "—")</strong></div>
+        <div><span>最近刷新</span><strong>@(lastRefresh?.ToString("HH:mm:ss") ?? "—")</strong></div>
+    </div>
+    <div class="server-actions">
+        <button class="btn btn-primary" disabled="@(!interactive || busy || snapshot?.Status != 0)" @onclick='() => ControlAsync("start")'>启动服务器</button>
+        <button class="btn btn-outline-secondary" disabled="@(!interactive || busy || snapshot?.Status != 3)" @onclick='() => Confirm("stop")'>正常停止</button>
+        <button class="btn btn-outline-secondary" disabled="@(!interactive || busy || snapshot?.Status != 3)" @onclick='() => Confirm("restart")'>重启</button>
+        <button class="btn btn-link" disabled="@(!interactive || busy)" @onclick="RefreshAsync">@(busy ? "正在处理…" : "刷新状态")</button>
+    </div>
+    @if (pendingAction is not null)
+    {
+        <div class="confirmation" role="alert">
+            <span>@(pendingAction == "stop" ? "停止会断开在线玩家，管理引擎将请求正常保存并退出。" : "重启会短暂断开在线玩家。")</span>
+            <button class="btn btn-danger" disabled="@busy" @onclick="ConfirmControlAsync">确认@(pendingAction == "stop" ? "停止" : "重启")</button>
+            <button class="btn btn-outline-secondary" disabled="@busy" @onclick="CancelConfirmation">取消</button>
+        </div>
+    }
+    <p class="helper">进程运行不等于游戏已就绪；游戏查询响应也不代表公网可达。提交操作后请刷新确认最终状态。</p>
+</section>
+<section class="log-section" aria-label="最近日志">
+    <div class="section-heading"><h2>最近日志</h2><span>最多读取最近 16 KB · 手动刷新</span></div>
+    <pre class="console" tabindex="0">@(logs.Length == 0 ? "暂无日志。" : logs)</pre>
+</section>
+<p class="helper">当前版本管理一个已有实例。创建向导、插件安装与领地管理将在后续版本提供。</p>
+
+@code {
+    private ConnectionSettings connection = new();
+    private InstanceSnapshot? snapshot;
+    private string logs = "";
+    private string? message;
+    private string? pendingAction;
+    private bool hasError;
+    private bool busy;
+    private bool interactive;
+    private DateTimeOffset? lastRefresh;
+
+    protected override async Task OnInitializedAsync() => await RefreshAsync();
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) { interactive = true; StateHasChanged(); }
+    }
+
+    private async Task RefreshAsync()
+    {
+        busy = true;
+        connection = Connections.Read();
+        message = null;
+        hasError = false;
+        try
+        {
+            snapshot = await Servers.GetSnapshotAsync();
+            logs = await Servers.GetLogsAsync();
+            lastRefresh = DateTimeOffset.Now;
+        }
+        catch (EngineException ex) { snapshot = null; logs = ""; message = ex.Message; hasError = true; }
+        finally { busy = false; }
+    }
+
+    private void Confirm(string action) => pendingAction = action;
+    private void CancelConfirmation() => pendingAction = null;
+    private async Task ConfirmControlAsync()
+    {
+        var action = pendingAction;
+        pendingAction = null;
+        if (action is not null) await ControlAsync(action);
+    }
+
+    private async Task ControlAsync(string action)
+    {
+        busy = true;
+        hasError = false;
+        message = null;
+        try
+        {
+            await Servers.ControlAsync(action);
+            snapshot = await Servers.GetSnapshotAsync();
+            logs = await Servers.GetLogsAsync();
+            lastRefresh = DateTimeOffset.Now;
+            message = connection.DemoMode ? "演示状态已更新，没有操作真实服务器。" : "请求已提交。请刷新确认服务器最终状态。";
+        }
+        catch (EngineException ex) { message = ex.Message; hasError = true; }
+        finally { busy = false; }
+    }
+}

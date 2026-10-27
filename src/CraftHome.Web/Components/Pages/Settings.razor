@@ -1,0 +1,90 @@
+@page "/settings"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Owner")]
+@rendermode InteractiveServer
+@using CraftHome.Web.Services
+@inject ConnectionStore Connections
+
+<PageTitle>连接设置 · CraftHome</PageTitle>
+<div class="page-heading"><div><h1>连接设置</h1><p>连接已经安装的 MCSManager，管理一个已有实例。</p></div></div>
+@if (message is not null)
+{
+    <div class="notice @(hasError ? "notice-error" : "notice-success")" role="status">@message</div>
+}
+<EditForm Model="form" OnValidSubmit="SaveAsync" FormName="connection" class="settings-form">
+    <fieldset disabled="@(!interactive || saving)">
+    <label for="mode">运行模式</label>
+    <InputSelect id="mode" class="form-select" @bind-Value="form.DemoMode"><option value="true">演示模式（不操作真实服务器）</option><option value="false">真实 MCSManager 连接</option></InputSelect>
+    <label for="server-name">服务器名称</label>
+    <InputText id="server-name" class="form-control" @bind-Value="form.Name" maxlength="80" />
+    <label for="address">玩家连接地址</label>
+    <InputText id="address" class="form-control" @bind-Value="form.Address" placeholder="服务器 IP:25565" />
+    <p class="helper">仅更新页面显示；游戏服务还需监听对应端口，并配置系统防火墙和云安全组。修改此处不会自动更改游戏端口。</p>
+    @if (!form.DemoMode)
+    {
+        <label for="base-url">MCSManager 面板地址</label>
+        <InputText id="base-url" class="form-control" @bind-Value="form.BaseUrl" placeholder="http://127.0.0.1:23333" />
+        <p class="helper">这是控制台服务端访问的地址。跨公网连接建议使用 SSH 隧道或 HTTPS。</p>
+        <label for="api-key">API Key</label>
+        <InputText id="api-key" type="password" class="form-control" @bind-Value="form.ApiKey" autocomplete="new-password" placeholder="@(hasSavedKey ? "已保存；留空保留，填写则替换" : "从 MCSManager 账户页面生成")" />
+        <label for="daemon-id">节点 ID（daemonId）</label>
+        <InputText id="daemon-id" class="form-control" @bind-Value="form.DaemonId" />
+        <label for="instance-id">实例 ID（uuid）</label>
+        <InputText id="instance-id" class="form-control" @bind-Value="form.InstanceId" />
+        <p class="helper">两个 ID 可从原面板实例终端页面的地址中获取。API Key 应具备该实例的管理权限。</p>
+    }
+    <div class="form-actions"><button class="btn btn-primary" type="submit" disabled="@saving">@(saving ? "正在保存…" : "保存设置")</button><a class="btn btn-outline-secondary" href="/">返回服务器</a></div>
+    </fieldset>
+</EditForm>
+<div class="notice">连接密钥只保存在服务端，并使用 ASP.NET Core Data Protection 保护。备份控制台数据时需同时保留 keys 目录。</div>
+
+@code {
+    private ConnectionForm form = new();
+    private bool hasSavedKey;
+    private bool saving;
+    private bool interactive;
+    private bool hasError;
+    private string? message;
+
+    protected override void OnInitialized()
+    {
+        var saved = Connections.Read();
+        hasSavedKey = saved.ApiKey.Length > 0;
+        form = new() { DemoMode = saved.DemoMode, BaseUrl = saved.BaseUrl, DaemonId = saved.DaemonId,
+            InstanceId = saved.InstanceId, Name = saved.Name, Address = saved.Address };
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) { interactive = true; StateHasChanged(); }
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        hasError = false;
+        try
+        {
+            var previous = Connections.Read();
+            await Connections.SaveAsync(new(form.DemoMode, form.BaseUrl.Trim(),
+                string.IsNullOrWhiteSpace(form.ApiKey) ? previous.ApiKey : form.ApiKey.Trim(),
+                form.DaemonId.Trim(), form.InstanceId.Trim(), form.Name.Trim(), form.Address.Trim()));
+            form.ApiKey = "";
+            hasSavedKey = Connections.Read().ApiKey.Length > 0;
+            message = "设置已保存。返回服务器页面刷新，即可检查连接。";
+        }
+        catch (ArgumentException ex) { message = ex.Message; hasError = true; }
+        catch (IOException) { message = "无法保存设置，请检查数据目录写入权限。"; hasError = true; }
+        finally { saving = false; }
+    }
+
+    private sealed class ConnectionForm
+    {
+        public bool DemoMode { get; set; } = true;
+        public string BaseUrl { get; set; } = "";
+        public string ApiKey { get; set; } = "";
+        public string DaemonId { get; set; } = "";
+        public string InstanceId { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Address { get; set; } = "";
+    }
+}

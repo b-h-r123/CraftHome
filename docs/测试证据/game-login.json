@@ -1,0 +1,20 @@
+{
+  "time": "2026-10-27T16:21:55.271Z",
+  "address": "47.104.68.190:25565",
+  "version": "1.21.11",
+  "library": "minecraft-protocol 1.68.0",
+  "sshTunnelUsed": false,
+  "checks": [
+    {
+      "username": "CraftHomeProbe",
+      "rejectedByWhitelist": true
+    },
+    {
+      "username": "JeRyan",
+      "authenticatedAs": "offline",
+      "playLogin": true,
+      "worldPositionReceived": true,
+      "uuid": "64d8811c-c74a-3a01-b78e-df0cda7fff83"
+    }
+  ]
+}

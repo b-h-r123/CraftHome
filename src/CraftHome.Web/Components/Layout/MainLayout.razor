@@ -1,0 +1,22 @@
+@inherits LayoutComponentBase
+
+<header class="site-header">
+    <a class="brand" href="/"><span class="brand-mark">C</span><span>CraftHome<small>我的世界 · 开服控制台</small></span></a>
+    <nav aria-label="主导航">
+        <AuthorizeView Roles="Owner">
+            <Authorized>
+                <NavLink href="/" Match="NavLinkMatch.All">服务器</NavLink>
+                <NavLink href="/settings">连接设置</NavLink>
+                <a href="Account/Manage/ChangePassword">修改密码</a>
+                <form action="Account/Logout" method="post">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="ReturnUrl" value="Account/Login" />
+                    <button class="nav-button" type="submit">退出</button>
+                </form>
+            </Authorized>
+        </AuthorizeView>
+    </nav>
+</header>
+<main class="workspace">@Body</main>
+<footer class="site-footer">CraftHome v0.1 · 基于 MCSManager 管理引擎</footer>
+<div id="blazor-error-ui" data-nosnippet>连接已中断或页面发生错误。<a href="." class="reload">重新加载</a></div>

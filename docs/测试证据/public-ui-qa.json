@@ -1,0 +1,27 @@
+{
+  "time": "2026-10-27T16:20:50.483Z",
+  "url": "http://47.104.68.190:5080",
+  "browser": "Microsoft Edge via Playwright",
+  "browserPlugin": "not available",
+  "viewports": [
+    "1440x1000",
+    "390x844"
+  ],
+  "checks": [
+    "public login page renders",
+    "public owner login and real server page",
+    "interactive refresh updates server timestamp",
+    "public UI starts real game and receives query response",
+    "desktop and mobile rendered without overflow",
+    "settings render without returning saved API key",
+    "logout returns to login"
+  ],
+  "websockets": [
+    "ws://47.104.68.190:5080/_blazor"
+  ],
+  "unexpectedOrigins": [],
+  "errors": [],
+  "warnings": [],
+  "gameLeftRunning": true,
+  "sshTunnelUsedByBrowser": false
+}

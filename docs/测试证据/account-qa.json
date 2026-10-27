@@ -1,0 +1,10 @@
+{
+  "checks": [
+    "single account layout",
+    "change password",
+    "restore original password",
+    "logout",
+    "login after password change"
+  ],
+  "errors": []
+}

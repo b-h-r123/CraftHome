@@ -1,0 +1,23 @@
+{
+  "time": "2026-10-27T15:15:39.808Z",
+  "url": "http://127.0.0.1:5081",
+  "title": "连接设置 · CraftHome",
+  "checks": [
+    "Linux console login",
+    "real connection saved",
+    "real Minecraft start from browser",
+    "Minecraft protocol status query",
+    "restart from browser with new PID",
+    "normal stop from browser",
+    "mobile no overflow",
+    "saved API key not returned"
+  ],
+  "firstPid": 100750,
+  "restartedPid": 100833,
+  "version": {
+    "name": "Paper 1.21.11",
+    "protocol": 774
+  },
+  "elapsedSeconds": 133,
+  "errors": []
+}
