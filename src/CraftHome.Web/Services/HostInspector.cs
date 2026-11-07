@@ -15,6 +15,9 @@ public interface IHostInspector
 
 public sealed class HostInspector(RuntimePaths paths) : IHostInspector
 {
+    private const string UbuntuJava21 = "/usr/lib/jvm/java-21-openjdk-amd64/bin/java";
+    internal static string JavaExecutable => File.Exists(UbuntuJava21) ? UbuntuJava21 : "/usr/bin/java";
+
     public async Task<HostReport> InspectAsync(int port, int memoryMiB, CancellationToken ct = default)
     {
         if (!OperatingSystem.IsLinux()) return new(RuntimeInformation.OSDescription, 0, 0, 0, port,
@@ -36,7 +39,7 @@ public sealed class HostInspector(RuntimePaths paths) : IHostInspector
         int java = 0;
         try
         {
-            using var process = new Process { StartInfo = new("/usr/bin/java", "-version") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false } };
+            using var process = new Process { StartInfo = new(JavaExecutable, "-version") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false } };
             process.Start();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
@@ -47,7 +50,7 @@ public sealed class HostInspector(RuntimePaths paths) : IHostInspector
             if (match.Success) java = int.Parse(match.Groups[1].Value);
         }
         catch (System.ComponentModel.Win32Exception) { }
-        if (java < 21) blockers.Add("未检测到 /usr/bin/java 的 Java 21 或更高版本。请运行 Linux 环境准备脚本后重试。");
+        if (java < 21) blockers.Add("未检测到可用的 Java 21 或更高版本。请运行 Linux 环境准备脚本后重试。");
         return new(RuntimeInformation.OSDescription, java, available, disk, suggested, blockers.ToArray(), warnings.ToArray());
     }
 }

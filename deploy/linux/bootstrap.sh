@@ -22,8 +22,12 @@ done
 echo "系统：$PRETTY_NAME / $(uname -m)"
 free -m
 df -h /
+java_binary=/usr/bin/java
+if [[ -x /usr/lib/jvm/java-21-openjdk-amd64/bin/java ]]; then
+  java_binary=/usr/lib/jvm/java-21-openjdk-amd64/bin/java
+fi
 if [[ $check == true ]]; then
-  command -v java >/dev/null && java -version 2>&1 | head -n 3 || true
+  [[ -x $java_binary ]] && "$java_binary" -version 2>&1 | head -n 3 || true
   systemctl is-active crafthome mcsm-web mcsm-daemon || true
   echo '检测完成；未修改服务或文件。'
   exit 0
@@ -42,7 +46,7 @@ packages=()
 for tool in curl tar python3; do command -v "$tool" >/dev/null || packages+=("$tool"); done
 command -v xz >/dev/null || packages+=(xz-utils)
 [[ -s /etc/ssl/certs/ca-certificates.crt ]] || packages+=(ca-certificates)
-if [[ ! -x /usr/bin/java ]] || ! /usr/bin/java -version 2>&1 | grep -Eq 'version "(2[1-9]|[3-9][0-9])'; then
+if [[ ! -x $java_binary ]] || ! "$java_binary" -version 2>&1 | grep -Eq 'version "(2[1-9]|[3-9][0-9])'; then
   packages+=(openjdk-21-jre-headless)
 fi
 if [[ ${#packages[@]} -gt 0 ]]; then

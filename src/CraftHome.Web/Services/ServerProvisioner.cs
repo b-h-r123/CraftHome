@@ -50,7 +50,7 @@ public sealed class ServerProvisioner(ConnectionStore connections, McsManagerCli
             instanceId = await engine.CreateInstanceAsync(connection, new
             {
                 nickname = options.Name.Trim(), cwd = "", type = "minecraft/java", processType = "general",
-                startCommand = $"/usr/bin/java -Xms128M -Xmx{options.MemoryMiB}M -jar server.jar --nogui",
+                startCommand = $"{HostInspector.JavaExecutable} -Xms128M -Xmx{options.MemoryMiB}M -jar server.jar --nogui",
                 stopCommand = "stop", stopTimeout = 90, ie = "utf-8", oe = "utf-8",
                 terminalOption = new { haveColor = false, pty = false, ptyWindowCol = 120, ptyWindowRow = 30 },
                 eventTask = new { autoStart = false, autoRestart = true, autoRestartMaxTimes = 3, ignore = false },
