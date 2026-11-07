@@ -20,6 +20,38 @@ public sealed class ProvisioningTests : IDisposable
     private static CreateServerOptions Valid => new("测试服", "1.21.11", 25566, 512, "example.com", true, "JeRyan", true);
 
     [Fact]
+    public async Task FirstStartKeepsWaitingAfterATemporaryQueryFailure()
+    {
+        using var factory = Factory();
+        var store = factory.Services.GetRequiredService<ConnectionStore>();
+        await store.SaveAsync(new(false, "http://127.0.0.1:23333", "test-key", "daemon", "existing"));
+        var queries = 0;
+        var starts = 0;
+        var engine = new McsManagerClient(new HttpClient(new Handler(request =>
+        {
+            if (request.Method == HttpMethod.Post) { starts++; return EngineResponse("true"); }
+            if (request.RequestUri!.AbsolutePath == "/api/service/remote_services_list")
+                return EngineResponse("[{\"uuid\":\"daemon\",\"ip\":\"127.0.0.1\",\"available\":true}]");
+            return ++queries switch
+            {
+                1 => EngineResponse("{\"status\":0}"),
+                2 => throw new HttpRequestException("Temporary disconnect"),
+                _ => EngineResponse("{\"status\":3,\"info\":{\"mcPingOnline\":true}}")
+            };
+        })));
+        var service = new ServerProvisioner(store, engine, factory.Services.GetRequiredService<PaperCatalog>(), new StubHost());
+        await service.StartAsync(new("new", "New server", "example.com:25566", 25566, 512, "1.21.11", 132), _ => Task.CompletedTask);
+        Assert.Equal(1, starts);
+        Assert.Equal(3, queries);
+        Assert.Equal("new", store.Read().InstanceId);
+    }
+
+    private static HttpResponseMessage EngineResponse(string data) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("{\"status\":200,\"data\":" + data + "}")
+    };
+
+    [Fact]
     public async Task EulaMustBeExplicitlyAcceptedBeforeCreation()
     {
         using var factory = Factory();
@@ -41,7 +73,7 @@ public sealed class ProvisioningTests : IDisposable
             if (request.Method != HttpMethod.Get) mutations++;
             return new(HttpStatusCode.OK) { Content = new StringContent("{\"status\":200,\"data\":[{\"uuid\":\"daemon\",\"ip\":\"127.0.0.1\",\"available\":true}]}") };
         })));
-        var service = new ServerProvisioner(store, engine, factory.Services.GetRequiredService<PaperCatalog>(), new BlockedHost(reason));
+        var service = new ServerProvisioner(store, engine, factory.Services.GetRequiredService<PaperCatalog>(), new StubHost(reason));
         var error = await Assert.ThrowsAsync<EngineException>(() => service.CreateAsync(Valid, _ => Task.CompletedTask));
         Assert.Contains(reason, error.Message);
         Assert.Equal(0, mutations);
@@ -148,10 +180,10 @@ public sealed class ProvisioningTests : IDisposable
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => Task.FromResult(response(request));
     }
 
-    private sealed class BlockedHost(string reason) : IHostInspector
+    private sealed class StubHost(string? reason = null) : IHostInspector
     {
         public Task<HostReport> InspectAsync(int port, int memoryMiB, CancellationToken ct = default)
-            => Task.FromResult(new HostReport("Linux", 21, 100, 10, port, [reason], []));
+            => Task.FromResult(new HostReport("Linux", 21, 2048, 10, port, reason is null ? [] : [reason], []));
     }
 
     public void Dispose()

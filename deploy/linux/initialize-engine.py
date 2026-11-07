@@ -41,15 +41,22 @@ else:
     raise SystemExit('MCSManager Web did not become ready.')
 
 users = list((base / 'web/data/User').glob('*.json'))
+private = pathlib.Path('/root/crafthome-mcsmanager-admin.json')
+
+
+def enable_api_key():
+    token = api('GET', '/api/auth/token')
+    return api('PUT', '/api/auth/api', {'enable': True}, {'token': token})
+
+
 if not users:
     username = 'CraftHomeOwner'
-    password = secrets.token_hex(18) + 'Aa1!'
+    # MCSManager accepts at most 36 characters and requires mixed case and digits.
+    password = secrets.token_hex(16) + 'Aa1!'
     api('POST', '/api/auth/install', {'username': username, 'password': password})
-    token = api('GET', '/api/auth/token')
-    key = api('PUT', '/api/auth/api', {'enable': True}, {'token': token})
-    private = pathlib.Path('/root/crafthome-mcsmanager-admin.json')
     private.write_text(json.dumps({'username': username, 'password': password}, indent=2))
     private.chmod(0o600)
+    key = enable_api_key()
 else:
     for user_file in users:
         key = json.loads(user_file.read_text()).get('apiKey')
@@ -60,6 +67,9 @@ else:
             break
         except (RuntimeError, urllib.error.HTTPError):
             key = None
+    if not key and private.is_file():
+        api('POST', '/api/auth/login', json.loads(private.read_text()))
+        key = enable_api_key()
     if not key:
         raise SystemExit('Existing MCSManager has no usable administrator API key. Enable one in the existing panel; no account was reset.')
 

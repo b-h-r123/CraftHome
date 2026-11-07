@@ -6,7 +6,10 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace CraftHome.Web.Services;
 
-public sealed class EngineException(string message) : Exception(message);
+public sealed class EngineException(string message, bool isTransient = false) : Exception(message)
+{
+    public bool IsTransient { get; } = isTransient;
+}
 
 public sealed record InstanceSnapshot(int Status, long? MemoryBytes, bool GameResponding)
 {
@@ -176,8 +179,8 @@ public sealed class McsManagerClient(HttpClient http, ILogger<McsManagerClient>?
             }
             return document;
         }
-        catch (HttpRequestException) { throw new EngineException("无法连接管理引擎，请检查面板地址、SSH 隧道或服务状态。"); }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new EngineException("管理引擎请求超时，请稍后刷新状态。"); }
+        catch (HttpRequestException) { throw new EngineException("无法连接管理引擎，请检查面板地址、SSH 隧道或服务状态。", isTransient: true); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new EngineException("管理引擎请求超时，请稍后刷新状态。", isTransient: true); }
         catch (JsonException) { throw new EngineException("管理引擎返回了无效 JSON，请检查地址是否指向面板 API。"); }
     }
 }

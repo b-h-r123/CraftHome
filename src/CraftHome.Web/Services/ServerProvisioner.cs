@@ -90,14 +90,27 @@ public sealed class ServerProvisioner(ConnectionStore connections, McsManagerCli
                 await engine.ControlAsync(target, "start", ct);
             }
             await connections.SaveAsync(target, ct);
-            for (var attempt = 0; attempt < 120; attempt++)
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromMinutes(4));
+            try
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                snapshot = await engine.GetSnapshotAsync(target, ct);
-                if (snapshot.Status == 3 && snapshot.GameResponding) { await progress("游戏查询已响应，可以进入管理页面。"); return; }
-                if (snapshot.Status == 0) throw new EngineException("游戏在准备完成前退出。已切换到新实例，请到服务器页面查看日志。");
+                while (true)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), timeout.Token);
+                    try { snapshot = await engine.GetSnapshotAsync(target, timeout.Token); }
+                    catch (EngineException ex) when (ex.IsTransient)
+                    {
+                        await progress("管理引擎暂时未响应，正在等待游戏就绪…");
+                        continue;
+                    }
+                    if (snapshot.Status == 3 && snapshot.GameResponding) { await progress("游戏查询已响应，可以进入管理页面。"); return; }
+                    if (snapshot.Status == 0) throw new EngineException("游戏在准备完成前退出。已切换到新实例，请到服务器页面查看日志。");
+                }
             }
-            throw new EngineException("首次启动尚未确认就绪，实例可能仍在准备。请到服务器页面刷新并查看日志，暂勿重复创建。");
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new EngineException("首次启动尚未确认就绪，实例可能仍在准备。请到服务器页面刷新并查看日志，暂勿重复创建。");
+            }
         }
         finally { gate.Release(); }
     }
