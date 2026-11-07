@@ -1,6 +1,6 @@
 # CraftHome
 
-面向 Minecraft 新手服主的 C# Web 控制台，基于成熟的 MCSManager 管理引擎。当前版本 **v0.1 基础控制版**。
+面向 Minecraft 新手服主的 C# Web 控制台，基于成熟的 MCSManager 管理引擎。当前版本 **v0.2 新手开服向导**。
 
 ## 已实现
 
@@ -12,8 +12,33 @@
 - 有清晰标注的演示模式，不会假装连接了真实服务器。
 - 适配手机布局。
 - Linux x64 自包含发行、systemd 安装脚本。
+- Ubuntu 24.04 x86_64 安装器：准备 Java 21 和官方 MCSManager，自动连接管理引擎。
+- 新手向导：环境检测、Paper 1.21.x 稳定构建选择、SHA-256 校验、独立实例创建和首次启动。
+- 可选择正版验证或离线账号白名单；显式确认 EULA 后才写入接受状态。
+- 已有实例切换，创建过程保留旧实例和世界。
 
-当前不包含自动创建 Minecraft 实例、版本切换、备份恢复、Mod／插件市场、角色或领地管理。先通过原 MCSManager 创建测试实例，再连接此控制台。后续按项目方案逐项加入。
+当前不包含已有世界原地换版本、备份恢复、Mod／插件市场、游戏内密码、角色或领地管理。Windows 可以运行控制台并管理已有实例；自动创建目前限定 Linux 同机部署。
+
+## 新手快速开始
+
+准备一台 **Ubuntu 24.04 x86_64** 服务器，建议至少 2 GiB 内存和 2 GiB 可用磁盘；多人游玩需要更多内存。具备 sudo 权限，并能连接 GitHub、Node.js、Paper 和 Minecraft 官方下载源。
+
+```bash
+curl -fL https://raw.githubusercontent.com/b-h-r123/CraftHome/main/deploy/linux/bootstrap.sh -o bootstrap.sh
+sudo bash bootstrap.sh --public
+```
+
+安装器从本仓库最新 Release 下载自包含程序并核对 SHA-256。`--public` 使 WebUI 监听 `0.0.0.0:5080`；不加此参数时使用 SSH 隧道访问。云安全组需要另行允许 TCP 5080 和游戏端口（默认 25565）。MCSManager 的管理端口仍只监听本机。
+
+1. 打开 `http://服务器公网IP:5080`，用 `sudo cat /var/lib/crafthome/first-login.txt` 中的账号登录。
+2. 点击“新手开服”，检查 Java、内存、磁盘和端口。
+3. 选择 Paper 版本，填写内存、公网 IP 和游戏端口，阅读并确认 EULA。
+4. 点击“创建服务器”，完成后点击“首次启动并管理”。
+5. 等待“查询已响应”，再用相同版本的 Minecraft Java 客户端连接 `公网IP:游戏端口`。
+
+控制台查询成功只说明服务器本机游戏服务已响应；公网进入还受防火墙、安全组和客户端版本影响。当前公网入口使用 HTTP，长期部署应配置 HTTPS。
+
+升级已有 CraftHome：`sudo bash bootstrap.sh --upgrade`；先只检测：`sudo bash bootstrap.sh --check`。完整操作、源码构建和故障排查见 [v0.2 开服指南](docs/v0.2-开服指南.md)。
 
 ## Windows 本地启动
 
@@ -35,7 +60,7 @@ cd CraftHome
 Get-Content .\src\CraftHome.Web\.local\first-login.txt
 ```
 
-默认进入演示模式。在“连接设置”选择真实连接并填写：
+Windows 本地开发默认进入演示模式。在“连接设置”选择真实连接并填写：
 
 1. MCSManager 面板地址，通常是 `http://127.0.0.1:23333`。
 2. 在原面板生成的 API Key，需启用 API Key 功能并具有该实例权限。
@@ -55,17 +80,17 @@ Get-Content .\src\CraftHome.Web\.local\first-login.txt
 
 ```powershell
 dotnet publish src/CraftHome.Web/CraftHome.Web.csproj -c Release -r linux-x64 --self-contained true -o artifacts/linux-x64
-tar -czf artifacts/crafthome-v0.1-linux-x64.tar.gz -C artifacts/linux-x64 .
+tar -czf artifacts/crafthome-linux-x64.tar.gz -C artifacts/linux-x64 .
 ```
 
-当前开发电脑可将命令中的 `dotnet` 替换为 `.\.local\dotnet\dotnet.exe`。把发行包和 `deploy/linux/install.sh` 上传到 Ubuntu 24.04 x86_64：
+当前开发电脑可将命令中的 `dotnet` 替换为 `.\.local\dotnet\dotnet.exe`。把发行包和 `deploy/linux/bootstrap.sh` 上传到 Ubuntu 24.04 x86_64：
 
 ```bash
-sudo bash install.sh /绝对路径/crafthome-v0.1-linux-x64.tar.gz
+sudo bash bootstrap.sh /绝对路径/crafthome-linux-x64.tar.gz
 systemctl status crafthome --no-pager
 ```
 
-脚本仅用于首次安装，已有安装时会退出，保留数据。控制台默认只监听本机 `127.0.0.1:5080`。从本地电脑开 SSH 隧道：
+已有安装需明确添加 `--upgrade`，程序会先备份，账号和游戏数据保留。控制台默认只监听本机 `127.0.0.1:5080`。从本地电脑开 SSH 隧道：
 
 ```powershell
 .\scripts\connect-server.ps1 -Server 服务器IP -User SSH用户名
@@ -77,7 +102,7 @@ systemctl status crafthome --no-pager
 
 MCSManager 采用官方发行版。当前验证目标为 Web 10.22.0／Daemon 4.19.3，Node.js 22.23.4。安装和初始化参考 [官方仓库](https://github.com/MCSManager/MCSManager)。其管理端口应按部署拓扑限制访问，测试环境采用回环地址和 SSH 隧道。
 
-本仓库的安装脚本不重新实现或替代上游安装器，也不自动接受 Minecraft EULA。
+安装器使用固定版本的官方 MCSManager 发行文件并核对哈希，没有修改上游核心，也不自动接受 Minecraft EULA。保留的底层 `install.sh` 只负责安装控制台，通常应使用 `bootstrap.sh`。
 
 ### 使用公网 IP 和端口访问
 
@@ -113,9 +138,11 @@ sudo bash deploy/linux/enable-public-access.sh
 dotnet test tests/CraftHome.Tests/CraftHome.Tests.csproj
 ```
 
-自动测试覆盖访问控制、防伪请求、关闭注册、API 业务错误、异常响应、有限日志请求和敏感密钥不出现在 URL 等。
+自动测试覆盖访问控制、防伪请求、关闭注册、API 错误、有限日志、密钥不出现在 URL、EULA、下载校验、离线白名单、资源不足不创建实例和文件上传等。完整浏览器测试入口为 `tests/browser/smoke.cjs`，仅对隔离测试环境执行；其会创建并启动一个真实实例。测试方法见 [v0.2 开服指南](docs/v0.2-开服指南.md)。
 
 浏览器与 Linux 实服测试结果见 `docs/测试报告.md`；只有报告标记通过的项目才算已验证。
+
+v0.2 的新增验证见 [v0.2 测试报告](docs/v0.2-测试报告.md)，自动化工作流见 [Actions](https://github.com/b-h-r123/CraftHome/actions)。
 
 最新公网游戏连接、PCL 离线账号和白名单验证见 [玩家连接与实服验证](docs/玩家连接与实服验证.md)。WebUI 中“玩家连接地址”用于展示游戏入口；修改该文字不会自动修改游戏实际监听配置。
 
@@ -123,14 +150,18 @@ dotnet test tests/CraftHome.Tests/CraftHome.Tests.csproj
 
 ```text
 src/CraftHome.Web/
-  Components/Pages/          服务器与连接设置
+  Components/Pages/          服务器、连接设置与新手创建向导
   Components/Account/        基于微软 Identity 模板的账户流程
   Services/McsManagerClient.cs  固定 API 适配
   Services/ServerService.cs     实例控制与显式演示模式
   Services/ConnectionStore.cs   受保护连接配置
+  Services/ServerProvisioner.cs 创建与首次启动流程
+  Services/PaperCatalog.cs      官方版本与哈希校验
+  Services/HostInspector.cs     Linux 环境检测
   Data/                     Identity 与 SQLite 迁移
 tests/CraftHome.Tests/       关键自动测试
-deploy/linux/               Linux 首次部署脚本
+tests/browser/              实际浏览器开服流程测试
+deploy/linux/               Linux 安装、升级与引擎初始化
 scripts/                    SSH 访问辅助脚本
 ```
 

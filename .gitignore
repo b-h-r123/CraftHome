@@ -12,3 +12,5 @@ artifacts/
 **/Data/*.db-*
 **/Data/keys/
 .env
+node_modules/
+reports/

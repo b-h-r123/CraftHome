@@ -7,6 +7,7 @@
             <Authorized>
                 <NavLink href="/" Match="NavLinkMatch.All">服务器</NavLink>
                 <NavLink href="/settings">连接设置</NavLink>
+                <NavLink href="/create">新手开服</NavLink>
                 <a href="Account/Manage/ChangePassword">修改密码</a>
                 <form action="Account/Logout" method="post">
                     <AntiforgeryToken />
@@ -18,5 +19,5 @@
     </nav>
 </header>
 <main class="workspace">@Body</main>
-<footer class="site-footer">CraftHome v0.1 · 基于 MCSManager 管理引擎</footer>
+<footer class="site-footer">CraftHome v0.2 · 基于 MCSManager 管理引擎</footer>
 <div id="blazor-error-ui" data-nosnippet>连接已中断或页面发生错误。<a href="." class="reload">重新加载</a></div>

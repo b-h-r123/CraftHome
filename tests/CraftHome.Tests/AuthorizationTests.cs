@@ -19,6 +19,7 @@ public sealed class AuthorizationTests : IDisposable
     [Theory]
     [InlineData("/")]
     [InlineData("/settings")]
+    [InlineData("/create")]
     public async Task AnonymousVisitorCannotAccessControls(string path)
     {
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });

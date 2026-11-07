@@ -4,7 +4,7 @@ if [[ $EUID -ne 0 ]]; then
   echo '请使用 sudo bash deploy/linux/install.sh <Linux 发行包路径>' >&2
   exit 1
 fi
-archive=$(realpath "${1:?请提供 crafthome-v0.1-linux-x64.tar.gz 路径}")
+archive=$(realpath "${1:?请提供 Linux x64 发行包路径}")
 if [[ $(uname -m) != x86_64 ]]; then
   echo '此发行包仅支持 Linux x86_64。' >&2
   exit 1

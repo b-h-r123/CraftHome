@@ -11,6 +11,7 @@
   <ItemGroup>
     <Content Remove=".local/**" />
     <None Remove=".local/**" />
+    <Content Include="../../deploy/linux/*" Link="deploy/linux/%(Filename)%(Extension)" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -19,6 +19,10 @@ builder.Services.AddSingleton(new HttpClient(new SocketsHttpHandler { AllowAutoR
 });
 builder.Services.AddSingleton<McsManagerClient>();
 builder.Services.AddSingleton<ServerService>();
+builder.Services.AddSingleton<IHostInspector, HostInspector>();
+builder.Services.AddSingleton(service => new PaperCatalog(new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
+    { Timeout = TimeSpan.FromMinutes(5), MaxResponseContentBufferSize = 2 * 1024 * 1024 }, service.GetRequiredService<RuntimePaths>()));
+builder.Services.AddSingleton<ServerProvisioner>();
 builder.Services.AddAuthorization();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto);
@@ -60,6 +64,7 @@ builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSe
 
 var app = builder.Build();
 await OwnerBootstrap.InitializeAsync(app.Services);
+await EngineBootstrap.ImportAsync(app.Services);
 app.UseForwardedHeaders();
 app.Use(async (context, next) =>
 {
@@ -97,7 +102,7 @@ app.MapRazorComponents<App>()
 
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();
-app.MapGet("/healthz", () => Results.Ok(new { status = "ok", version = "0.1.0" }));
+app.MapGet("/healthz", () => Results.Ok(new { status = "ok", version = "0.2.0" }));
 
 app.Run();
 

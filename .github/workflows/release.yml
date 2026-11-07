@@ -1,0 +1,96 @@
+name: Verify and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v0.*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - name: Unit and access control tests
+        run: dotnet test tests/CraftHome.Tests/CraftHome.Tests.csproj -c Release
+      - name: Publish Linux package
+        run: |
+          dotnet publish src/CraftHome.Web/CraftHome.Web.csproj -c Release -r linux-x64 --self-contained true -o artifacts/linux-x64
+          tar -czf artifacts/crafthome-linux-x64.tar.gz -C artifacts/linux-x64 .
+          cd artifacts
+          sha256sum crafthome-linux-x64.tar.gz > SHA256SUMS
+      - name: Install on clean Ubuntu runner
+        run: sudo bash deploy/linux/bootstrap.sh artifacts/crafthome-linux-x64.tar.gz
+      - name: Verify protected engine handoff
+        run: |
+          sudo python3 - <<'PY'
+          import json,pathlib
+          root=pathlib.Path('/var/lib/crafthome')
+          assert not (root/'engine-bootstrap.json').exists()
+          saved=(root/'connection.json').read_text()
+          for file in pathlib.Path('/opt/mcsmanager/web/data/User').glob('*.json'):
+              key=json.loads(file.read_text()).get('apiKey')
+              if key:assert key not in saved
+          print('Protected engine handoff passed')
+          PY
+      - name: Install browser test dependencies
+        run: |
+          npm ci --prefix tests/browser
+          cd tests/browser
+          npx playwright install --with-deps chromium
+      - name: Create and start first server through browser
+        env:
+          CRAFTHOME_LOGIN_FILE: ${{ runner.temp }}/crafthome-owner-login.txt
+          CRAFTHOME_GAME_MEMORY: '1024'
+          CRAFTHOME_REPORTS: reports
+        run: |
+          umask 077
+          sudo cat /var/lib/crafthome/first-login.txt > "$CRAFTHOME_LOGIN_FILE"
+          node tests/browser/smoke.cjs
+      - name: Remove temporary login file
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/crafthome-owner-login.txt"
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: wizard-test-evidence
+          path: reports/
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: linux-release
+          path: |
+            artifacts/crafthome-linux-x64.tar.gz
+            artifacts/SHA256SUMS
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v0.')
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: linux-release
+          path: release
+      - name: Publish verified installer package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release/crafthome-linux-x64.tar.gz release/SHA256SUMS --verify-tag --title "CraftHome $RELEASE_TAG" --notes "Linux 新手开服向导：环境检测、Paper 1.21.x 稳定版本、独立实例创建、首次启动与已有实例切换。支持 Ubuntu 24.04 x86_64。"

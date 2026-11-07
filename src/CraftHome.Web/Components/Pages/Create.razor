@@ -1,0 +1,175 @@
+@page "/create"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Owner")]
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@implements IDisposable
+@using CraftHome.Web.Services
+@inject ServerProvisioner Provisioner
+@inject McsManagerClient Engine
+@inject PaperCatalog Catalog
+@inject IHostInspector Inspector
+@inject ConnectionStore Connections
+@inject NavigationManager Navigation
+
+<PageTitle>新手开服 · CraftHome</PageTitle>
+<div class="page-heading"><div><h1>新手开服</h1><p>检查环境，选择版本，创建你的第一台 Paper 服务器。</p></div><a class="btn btn-outline-secondary" href="/">返回服务器</a></div>
+@if (error is not null) { <div class="notice notice-error" role="alert">@error</div> }
+@if (phase.Length > 0) { <div class="notice notice-success" role="status">@phase</div> }
+@if (loading) { <p>正在检查本机管理引擎并获取官方版本…</p> }
+else
+{
+    <section class="server-panel">
+        <h2>1. 安装与环境检测</h2>
+        @if (host is not null)
+        {
+            <p>@host.Platform · Java @host.JavaMajor</p>
+            <p>可用内存 @host.AvailableMemoryMiB MiB · 控制台所在分区可用 @host.FreeDiskGiB GiB</p>
+            @foreach (var blocker in host.Blockers) { <p class="text-danger">@blocker</p> }
+            @foreach (var warning in host.Warnings) { <p class="helper">@warning</p> }
+        }
+        <button class="btn btn-outline-secondary" disabled="@(!interactive || busy)" @onclick="CheckAsync">重新检测</button>
+        <p class="helper">当前支持 Linux 同机部署、Paper 1.21.x 和 Java 21。新手安装脚本会准备所需环境。</p>
+    </section>
+    @if (connection is not null)
+    {
+        <EditForm Model="form" OnValidSubmit="CreateAsync" FormName="create-server" class="settings-form mt-4">
+            <fieldset disabled="@(!interactive || busy || created is not null)">
+                <h2>2. 选择版本与开服参数</h2>
+                <label for="create-name">服务器名称</label><InputText id="create-name" class="form-control" @bind-Value="form.Name" maxlength="80" />
+                <label for="create-version">Minecraft 版本（Paper 稳定构建）</label>
+                <InputSelect id="create-version" class="form-select" @bind-Value="form.Version">
+                    @foreach (var version in versions) { <option value="@version">@version</option> }
+                </InputSelect>
+                <label for="create-port">游戏端口</label><InputNumber id="create-port" class="form-control" @bind-Value="form.Port" min="1024" max="65535" />
+                <label for="create-memory">Java 堆内存（MiB）</label><InputNumber id="create-memory" class="form-control" @bind-Value="form.MemoryMiB" min="512" max="16384" step="128" />
+                <p class="helper">512 MiB 仅适合低资源功能测试。创建与首次启动前会重新检查可用内存；Java 实际进程内存会大于堆上限。</p>
+                <label for="create-host">玩家连接的公网 IP 或域名（不含端口）</label><InputText id="create-host" class="form-control" @bind-Value="form.PublicHost" />
+                <p class="helper">系统会配置游戏监听，但仍需在系统防火墙和云安全组放行游戏端口。页面查询响应不等于公网可达。</p>
+                <label class="mt-3"><InputCheckbox id="create-offline" @bind-Value="form.OfflineMode" /> 允许离线账号</label>
+                @if (form.OfflineMode)
+                {
+                    <label for="create-player">允许进入的离线玩家名</label><InputText id="create-player" class="form-control" @bind-Value="form.PlayerName" maxlength="16" />
+                    <p class="helper">离线模式将启用白名单。玩家名区分大小写，当前没有游戏内密码验证，仍可能被冒用。</p>
+                }
+                else { <p class="helper">将启用正版验证，允许通过验证的玩家进入。</p> }
+                <label class="mt-3"><InputCheckbox id="create-eula" @bind-Value="form.AcceptEula" /> 我已阅读并同意 <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">Minecraft EULA</a></label>
+                <div class="form-actions"><button class="btn btn-primary" type="submit" disabled="@(versions.Length == 0)">创建服务器</button></div>
+            </fieldset>
+        </EditForm>
+        @if (created is not null)
+        {
+            <section class="server-panel mt-4">
+                <h2>3. 首次启动</h2><p>@created.Name · Paper @created.Version / 构建 @created.Build</p>
+                <p>玩家连接地址：<strong>@created.Address</strong></p>
+                <p>创建已完成。启动后控制台将切换到这个实例，已有实例仍可在下方切换。</p>
+                <button class="btn btn-primary" disabled="@busy" @onclick="StartAsync">首次启动并管理</button>
+                <a class="btn btn-link" href="/">前往服务器页面</a>
+            </section>
+        }
+        @if (instances.Length > 0)
+        {
+            <section class="server-panel mt-4">
+                <h2>已有服务器</h2><p class="helper">切换当前控制台管理的实例，不会启动、停止或删除其他服务器。最多显示前 50 个。</p>
+                <label for="existing-instance">选择实例</label>
+                <select id="existing-instance" class="form-select" @bind="selectedInstance" disabled="@(!interactive || busy)">
+                    @foreach (var instance in instances) { <option value="@instance.Id">@instance.Name · 端口 @instance.Port</option> }
+                </select>
+                <button class="btn btn-outline-secondary mt-3" disabled="@(!interactive || busy)" @onclick="SwitchAsync">切换并管理</button>
+            </section>
+        }
+    }
+}
+
+@code {
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly CreateForm form = new();
+    private ConnectionSettings? connection;
+    private HostReport? host;
+    private string[] versions = [];
+    private EngineInstance[] instances = [];
+    private CreatedServer? created;
+    private string selectedInstance = "";
+    private string? error;
+    private string phase = "";
+    private bool loading = true, busy, interactive;
+
+    protected override async Task OnInitializedAsync()
+    {
+        form.PublicHost = new Uri(Navigation.Uri).IsLoopback ? "" : new Uri(Navigation.Uri).Host;
+        try
+        {
+            host = await Inspector.InspectAsync(form.Port, form.MemoryMiB, lifetime.Token);
+            connection = await Provisioner.GetEngineAsync(lifetime.Token);
+            instances = await Engine.GetInstancesAsync(connection, lifetime.Token);
+            var used = instances.Select(item => item.Port).ToHashSet();
+            form.Port = host.SuggestedPort;
+            while (used.Contains(form.Port) && form.Port < 65535) form.Port++;
+            selectedInstance = instances.FirstOrDefault(item => item.Id == connection.InstanceId)?.Id ?? instances.FirstOrDefault()?.Id ?? "";
+            host = await Inspector.InspectAsync(form.Port, form.MemoryMiB, lifetime.Token);
+            versions = await Catalog.GetVersionsAsync(lifetime.Token);
+            form.Version = versions.FirstOrDefault() ?? "";
+        }
+        catch (Exception ex) when (ex is EngineException or HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
+        { error = ex is OperationCanceledException ? "检测超时，请稍后重试。" : ex.Message; }
+        finally { loading = false; }
+    }
+
+    protected override void OnAfterRender(bool firstRender) { if (firstRender) { interactive = true; StateHasChanged(); } }
+    private async Task ProgressAsync(string value) { phase = value; await InvokeAsync(StateHasChanged); }
+    private async Task CheckAsync()
+    {
+        busy = true; error = null;
+        try { host = await Inspector.InspectAsync(form.Port, form.MemoryMiB, lifetime.Token); }
+        catch (OperationCanceledException) { error = "检测已取消或超时。"; }
+        finally { busy = false; }
+    }
+    private async Task CreateAsync()
+    {
+        busy = true; error = null;
+        try
+        {
+            created = await Provisioner.CreateAsync(new(form.Name, form.Version, form.Port, form.MemoryMiB, form.PublicHost.Trim(), form.OfflineMode, form.PlayerName.Trim(), form.AcceptEula), ProgressAsync, lifetime.Token);
+            if (connection is not null) instances = await Engine.GetInstancesAsync(connection, lifetime.Token);
+        }
+        catch (Exception ex) when (ex is EngineException or ArgumentException or OperationCanceledException or IOException)
+        { error = ex is OperationCanceledException ? "操作取消或超时，请检查已有实例列表后再重试。" : ex.Message; }
+        finally { busy = false; }
+    }
+    private async Task StartAsync()
+    {
+        if (created is null) return;
+        busy = true; error = null;
+        try { await Provisioner.StartAsync(created, ProgressAsync, lifetime.Token); Navigation.NavigateTo("/"); }
+        catch (Exception ex) when (ex is EngineException or ArgumentException or OperationCanceledException or IOException)
+        { error = ex is OperationCanceledException ? "启动等待已取消，游戏可能仍在运行，请到服务器页面检查。" : ex.Message; }
+        finally { busy = false; }
+    }
+    private async Task SwitchAsync()
+    {
+        if (connection is null) return;
+        var instance = instances.FirstOrDefault(item => item.Id == selectedInstance);
+        if (instance is null) return;
+        busy = true;
+        try
+        {
+            var publicHost = form.PublicHost.Trim();
+            if (Uri.CheckHostName(publicHost) == UriHostNameType.Unknown) throw new ArgumentException("请先填写有效的玩家公网 IP 或域名。");
+            await Connections.SaveAsync(connection with { DemoMode = false, InstanceId = instance.Id, Name = instance.Name, Address = ServerProvisioner.Address(publicHost, instance.Port) }, lifetime.Token);
+            Navigation.NavigateTo("/");
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or OperationCanceledException) { error = ex.Message; }
+        finally { busy = false; }
+    }
+    public void Dispose() { lifetime.Cancel(); lifetime.Dispose(); }
+    private sealed class CreateForm
+    {
+        public string Name { get; set; } = "我的新生存服";
+        public string Version { get; set; } = "";
+        public int Port { get; set; } = 25565;
+        public int MemoryMiB { get; set; } = 512;
+        public string PublicHost { get; set; } = "";
+        public bool OfflineMode { get; set; }
+        public string PlayerName { get; set; } = "";
+        public bool AcceptEula { get; set; }
+    }
+}

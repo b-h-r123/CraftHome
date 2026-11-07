@@ -7,6 +7,12 @@
 
 <PageTitle>服务器 · CraftHome</PageTitle>
 <div class="page-heading"><div><h1>服务器</h1><p>从这里开始，照顾好你和朋友的世界。</p></div><a class="btn btn-outline-secondary" href="settings">连接设置</a></div>
+@if (connection.ApiKey.Length > 0 && connection.InstanceId.Length == 0)
+{
+    <div class="notice">管理引擎已准备好。<a href="create">打开新手开服向导，创建第一台服务器。</a></div>
+}
+else
+{
 @if (connection.DemoMode)
 {
     <div class="notice">当前为演示模式。操作只改变演示状态，尚未连接或启动真实 Minecraft。<a href="settings">连接你的服务器</a></div>
@@ -42,7 +48,8 @@
     <div class="section-heading"><h2>最近日志</h2><span>最多读取最近 16 KB · 手动刷新</span></div>
     <pre class="console" tabindex="0">@(logs.Length == 0 ? "暂无日志。" : logs)</pre>
 </section>
-<p class="helper">当前版本管理一个已有实例。创建向导、插件安装与领地管理将在后续版本提供。</p>
+<p class="helper">通过“新手开服”创建独立 Paper 实例，也可切换已有实例。插件安装与领地管理将在后续版本提供。</p>
+}
 
 @code {
     private ConnectionSettings connection = new();
@@ -70,6 +77,7 @@
         hasError = false;
         try
         {
+            if (connection.ApiKey.Length > 0 && connection.InstanceId.Length == 0) { snapshot = null; logs = ""; return; }
             snapshot = await Servers.GetSnapshotAsync();
             logs = await Servers.GetLogsAsync();
             lastRefresh = DateTimeOffset.Now;
