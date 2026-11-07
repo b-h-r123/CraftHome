@@ -157,7 +157,10 @@ public sealed class McsManagerClient(HttpClient http, ILogger<McsManagerClient>?
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 throw new EngineException("管理引擎拒绝访问，请检查 API Key 和实例权限。");
             if (!response.IsSuccessStatusCode)
+            {
+                logger?.LogWarning("Management engine returned HTTP {Status} for {Method} {Route}", (int)response.StatusCode, method, route);
                 throw new EngineException($"管理引擎返回 HTTP {(int)response.StatusCode}，请检查连接地址和引擎状态。");
+            }
             var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("status", out var status)
                 || status.ValueKind != JsonValueKind.Number || !status.TryGetInt32(out var code))

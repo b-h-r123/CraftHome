@@ -58,8 +58,18 @@ jobs:
           CRAFTHOME_REPORTS: reports
         run: |
           umask 077
+          date +%s > "$RUNNER_TEMP/crafthome-browser-start"
           sudo cat /var/lib/crafthome/first-login.txt > "$CRAFTHOME_LOGIN_FILE"
           node tests/browser/smoke.cjs
+      - name: Collect startup diagnostics on failure
+        if: failure()
+        run: |
+          if [[ -f "$RUNNER_TEMP/crafthome-browser-start" ]]; then
+            start=$(cat "$RUNNER_TEMP/crafthome-browser-start")
+            sudo journalctl -u mcsm-daemon -u crafthome --since "@$start" -n 80 --no-pager \
+              | grep -Eiv 'secret|token|password|apikey|密钥|密码' || true
+          fi
+          sudo find /opt/mcsmanager/daemon/data/InstanceData -name latest.log -exec tail -n 30 {} \; 2>/dev/null || true
       - name: Remove temporary login file
         if: always()
         run: rm -f -- "$RUNNER_TEMP/crafthome-owner-login.txt"
