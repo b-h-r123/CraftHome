@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.WebUtilities;
 
 namespace CraftHome.Web.Services;
@@ -22,9 +23,18 @@ public sealed record InstanceSnapshot(int Status, long? MemoryBytes, bool GameRe
 public sealed record EngineNode(string Id, string Host, bool Available);
 public sealed record EngineInstance(string Id, string Name, int Status, int Port);
 
-public sealed class McsManagerClient(HttpClient http, ILogger<McsManagerClient>? logger = null)
+public sealed class McsManagerClient(HttpClient http, ILogger<McsManagerClient>? logger = null) : IDisposable
 {
     private static readonly Regex TerminalEscapes = new(@"\x1B\[[0-?]*[ -/]*[@-~]|\x1B[=<>]|\x08", RegexOptions.NonBacktracking);
+    // MCSManager 10.22 permits eight low-level requests per session per second.
+    private readonly TokenBucketRateLimiter requestPace = new(new TokenBucketRateLimiterOptions
+    {
+        TokenLimit = 1, TokensPerPeriod = 1, ReplenishmentPeriod = TimeSpan.FromMilliseconds(150),
+        AutoReplenishment = true, QueueLimit = 16, QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+    });
+
+    public void Dispose() => requestPace.Dispose();
+
     public async Task<InstanceSnapshot> GetSnapshotAsync(ConnectionSettings settings, CancellationToken ct = default)
     {
         using var response = await SendAsync(settings, "api/instance", HttpMethod.Get, null, ct);
@@ -143,6 +153,8 @@ public sealed class McsManagerClient(HttpClient http, ILogger<McsManagerClient>?
     private async Task<JsonDocument> SendAsync(ConnectionSettings settings, string route, HttpMethod method,
         Dictionary<string, string?>? extra, CancellationToken ct, object? body = null)
     {
+        using var slot = await requestPace.AcquireAsync(1, ct);
+        if (!slot.IsAcquired) throw new EngineException("管理引擎请求过多，请稍后重试。", isTransient: true);
         var query = extra ?? new Dictionary<string, string?>();
         query["daemonId"] = settings.DaemonId;
         query["uuid"] = settings.InstanceId;
