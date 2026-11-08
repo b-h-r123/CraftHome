@@ -46,5 +46,6 @@ EOF
 systemctl daemon-reload
 systemctl enable --now crafthome.service
 echo '已安装。使用 SSH 隧道访问 http://127.0.0.1:5080。'
-echo '首次登录信息：sudo cat /var/lib/crafthome/first-login.txt'
+echo '默认登录邮箱：owner@crafthome.local'
+echo '首次启动生成的初始密码：sudo cat /var/lib/crafthome/first-login.txt'
 echo '此脚本安装控制台；MCSManager 和 Minecraft 实例需按 README 配置。'

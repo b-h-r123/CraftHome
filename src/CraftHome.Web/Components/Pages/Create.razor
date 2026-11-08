@@ -13,10 +13,15 @@
 
 <PageTitle>新手开服 · CraftHome</PageTitle>
 <div class="page-heading"><div><h1>新手开服</h1><p>检查环境，选择版本，创建你的第一台 Paper 服务器。</p></div><a class="btn btn-outline-secondary" href="/">返回服务器</a></div>
+<ol class="wizard-steps" aria-label="开服步骤">
+    <li aria-current="@(Step == 1 ? "step" : null)">检查环境</li>
+    <li aria-current="@(Step == 2 ? "step" : null)">创建服务器</li>
+    <li aria-current="@(Step == 3 ? "step" : null)">首次启动</li>
+    <li aria-current="@(Step == 4 ? "step" : null)">邀请玩家</li>
+</ol>
 @if (error is not null) { <div class="notice notice-error" role="alert">@error</div> }
-@if (phase.Length > 0) { <div class="notice notice-success" role="status">@phase</div> }
-@if (loading) { <p>正在检查本机管理引擎并获取官方版本…</p> }
-else
+@if (loading) { <p role="status">正在检查本机管理引擎并获取官方版本…</p> }
+else if (created is null)
 {
     <section class="server-panel">
         <h2>1. 安装与环境检测</h2>
@@ -28,6 +33,7 @@ else
             @foreach (var warning in host.Warnings) { <p class="helper">@warning</p> }
         }
         <button class="btn btn-outline-secondary" disabled="@(!interactive || busy)" @onclick="CheckAsync">重新检测</button>
+        @if (busy && phase.Length > 0) { <p class="notice wizard-progress" role="status">@phase</p> }
         <p class="helper">当前支持 Linux 同机部署、Paper 1.21.x 和 Java 21。新手安装脚本会准备所需环境。</p>
     </section>
     @if (connection is not null)
@@ -40,32 +46,26 @@ else
                 <InputSelect id="create-version" class="form-select" @bind-Value="form.Version">
                     @foreach (var version in versions) { <option value="@version">@version</option> }
                 </InputSelect>
-                <label for="create-port">游戏端口</label><InputNumber id="create-port" class="form-control" @bind-Value="form.Port" min="1024" max="65535" />
-                <label for="create-memory">Java 堆内存（MiB）</label><InputNumber id="create-memory" class="form-control" @bind-Value="form.MemoryMiB" min="512" max="16384" step="128" />
-                <p class="helper">512 MiB 仅适合低资源功能测试。创建与首次启动前会重新检查可用内存；Java 实际进程内存会大于堆上限。</p>
                 <label for="create-host">玩家连接的公网 IP 或域名（不含端口）</label><InputText id="create-host" class="form-control" @bind-Value="form.PublicHost" />
-                <p class="helper">系统会配置游戏监听，但仍需在系统防火墙和云安全组放行游戏端口。页面查询响应不等于公网可达。</p>
+                <p class="helper">填云服务器的公网 IP 或已解析到它的域名。游戏端口需要在系统防火墙和云安全组中放行。</p>
                 <label class="mt-3"><InputCheckbox id="create-offline" @bind-Value="form.OfflineMode" /> 允许离线账号</label>
                 @if (form.OfflineMode)
                 {
-                    <label for="create-player">允许进入的离线玩家名</label><InputText id="create-player" class="form-control" @bind-Value="form.PlayerName" maxlength="16" />
-                    <p class="helper">离线模式将启用白名单。玩家名区分大小写，当前没有游戏内密码验证，仍可能被冒用。</p>
+                    <label for="create-player">允许进入的离线玩家名</label><InputTextArea id="create-player" class="form-control" @bind-Value="form.PlayerName" rows="3" placeholder="JeRyan, PlayerTwo" />
+                    <p class="helper">逗号、空格或换行分隔。填写玩家实际使用的大小写，创建后可在「玩家管理」继续增删。</p>
+                    <p class="helper">需要离线玩家注册和登录时请选择 Paper 1.21.11。首次启动生成文件后先停服，再到「玩家管理」安装 AuthMe。</p>
                 }
                 else { <p class="helper">将启用正版验证，允许通过验证的玩家进入。</p> }
+                <details class="wizard-advanced">
+                    <summary>高级设置 · TCP @form.Port · 内存 @form.MemoryMiB MiB</summary>
+                    <label for="create-port">游戏端口</label><InputNumber id="create-port" class="form-control" @bind-Value="form.Port" min="1024" max="65535" />
+                    <label for="create-memory">Java 堆内存（MiB）</label><InputNumber id="create-memory" class="form-control" @bind-Value="form.MemoryMiB" min="512" max="16384" step="128" />
+                    <p class="helper">512 MiB 适合低资源功能测试。创建与首次启动时都会重新检查内存。</p>
+                </details>
                 <label class="mt-3"><InputCheckbox id="create-eula" @bind-Value="form.AcceptEula" /> 我已阅读并同意 <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">Minecraft EULA</a></label>
-                <div class="form-actions"><button class="btn btn-primary" type="submit" disabled="@(versions.Length == 0)">创建服务器</button></div>
+                <div class="form-actions"><button class="btn btn-primary" type="submit" disabled="@(versions.Length == 0)">@(busy ? "正在处理…" : "创建服务器")</button></div>
             </fieldset>
         </EditForm>
-        @if (created is not null)
-        {
-            <section class="server-panel mt-4">
-                <h2>3. 首次启动</h2><p>@created.Name · Paper @created.Version / 构建 @created.Build</p>
-                <p>玩家连接地址：<strong>@created.Address</strong></p>
-                <p>创建已完成。启动后控制台将切换到这个实例，已有实例仍可在下方切换。</p>
-                <button class="btn btn-primary" disabled="@busy" @onclick="StartAsync">首次启动并管理</button>
-                <a class="btn btn-link" href="/">前往服务器页面</a>
-            </section>
-        }
         @if (instances.Length > 0)
         {
             <section class="server-panel mt-4">
@@ -79,6 +79,42 @@ else
         }
     }
 }
+else
+{
+        <section class="server-panel" aria-labelledby="first-start-heading">
+            <h2 id="first-start-heading">@(completed ? "4. 邀请玩家" : "3. 首次启动")</h2>
+            <p>@created.Name · Minecraft Java 版 @created.Version · Paper 构建 @created.Build</p>
+            <p>玩家连接地址 <strong class="world-name">@created.Address</strong></p>
+            @if (completed)
+            {
+                <p role="status">游戏已响应。</p>
+                @if (created.OfflineMode)
+                {
+                    <p class="notice">此实例允许离线账号。需要验证玩家密码时，请先<a href="/">正常停服</a>，再到<a href="players">玩家管理</a>安装 AuthMe 并确认启用后邀请玩家。</p>
+                }
+                <p>请用相同版本的 Minecraft Java 客户端，从另一网络验证连接地址。</p>
+                <a class="btn btn-primary" href="/#player-connection">查看连接地址和排障步骤</a>
+            }
+            else
+            {
+                <p>实例已经创建。刷新或稍后回来可以继续首次启动。</p>
+                <div class="server-actions">
+                    <button class="btn btn-primary" disabled="@(!interactive || busy)" @onclick="StartAsync">@(busy ? "正在处理…" : "首次启动并管理")</button>
+                    <a class="btn btn-outline-secondary" href="/">查看服务器</a>
+                    <button class="btn btn-link" disabled="@(!interactive || busy)" @onclick="() => confirmDismiss = true">结束向导</button>
+                </div>
+                @if (busy && phase.Length > 0) { <p class="notice wizard-progress" role="status">@phase</p> }
+                @if (confirmDismiss)
+                {
+                    <div class="confirmation">
+                        <p>结束后会清除向导进度。已经创建的实例和游戏文件会保留。</p>
+                        <button class="btn btn-outline-secondary" disabled="@busy" @onclick="() => confirmDismiss = false">取消</button>
+                        <button class="btn btn-primary" disabled="@busy" @onclick="DismissAsync">结束并保留实例</button>
+                    </div>
+                }
+            }
+        </section>
+}
 
 @code {
     private readonly CancellationTokenSource lifetime = new();
@@ -91,27 +127,42 @@ else
     private string selectedInstance = "";
     private string? error;
     private string phase = "";
-    private bool loading = true, busy, interactive;
+    private bool loading = true, busy, interactive, completed, confirmDismiss;
+    private int Step => completed ? 4 : created is not null ? 3 : versions.Length > 0 ? 2 : 1;
 
     protected override async Task OnInitializedAsync()
     {
         form.PublicHost = new Uri(Navigation.Uri).IsLoopback ? "" : new Uri(Navigation.Uri).Host;
+        await LoadAsync(suggestPort: true);
+        loading = false;
+    }
+
+    private async Task LoadAsync(bool suggestPort)
+    {
         try
         {
+            created = await Provisioner.GetPendingAsync(lifetime.Token);
+            if (created is not null) return;
             host = await Inspector.InspectAsync(form.Port, form.MemoryMiB, lifetime.Token);
             connection = await Provisioner.GetEngineAsync(lifetime.Token);
             instances = await Engine.GetInstancesAsync(connection, lifetime.Token);
-            var used = instances.Select(item => item.Port).ToHashSet();
-            form.Port = host.SuggestedPort;
-            while (used.Contains(form.Port) && form.Port < 65535) form.Port++;
+            if (suggestPort)
+            {
+                var used = instances.Select(item => item.Port).ToHashSet();
+                form.Port = host.SuggestedPort;
+                while (used.Contains(form.Port) && form.Port < 65535) form.Port++;
+                if (host.AvailableMemoryMiB is >= 768 and < 1280) form.MemoryMiB = 512;
+                host = await Inspector.InspectAsync(form.Port, form.MemoryMiB, lifetime.Token);
+            }
             selectedInstance = instances.FirstOrDefault(item => item.Id == connection.InstanceId)?.Id ?? instances.FirstOrDefault()?.Id ?? "";
-            host = await Inspector.InspectAsync(form.Port, form.MemoryMiB, lifetime.Token);
-            versions = await Catalog.GetVersionsAsync(lifetime.Token);
-            form.Version = versions.FirstOrDefault() ?? "";
+            if (versions.Length == 0)
+            {
+                versions = await Catalog.GetVersionsAsync(lifetime.Token);
+                form.Version = versions.FirstOrDefault() ?? "";
+            }
         }
-        catch (Exception ex) when (ex is EngineException or HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
+        catch (Exception ex) when (ex is EngineException or HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or IOException)
         { error = ex is OperationCanceledException ? "检测超时，请稍后重试。" : ex.Message; }
-        finally { loading = false; }
     }
 
     protected override void OnAfterRender(bool firstRender) { if (firstRender) { interactive = true; StateHasChanged(); } }
@@ -119,8 +170,8 @@ else
     private async Task CheckAsync()
     {
         busy = true; error = null;
-        try { host = await Inspector.InspectAsync(form.Port, form.MemoryMiB, lifetime.Token); }
-        catch (OperationCanceledException) { error = "检测已取消或超时。"; }
+        phase = "正在重新检查环境和版本…";
+        try { await LoadAsync(suggestPort: false); }
         finally { busy = false; }
     }
     private async Task CreateAsync()
@@ -129,7 +180,6 @@ else
         try
         {
             created = await Provisioner.CreateAsync(new(form.Name, form.Version, form.Port, form.MemoryMiB, form.PublicHost.Trim(), form.OfflineMode, form.PlayerName.Trim(), form.AcceptEula), ProgressAsync, lifetime.Token);
-            if (connection is not null) instances = await Engine.GetInstancesAsync(connection, lifetime.Token);
         }
         catch (Exception ex) when (ex is EngineException or ArgumentException or OperationCanceledException or IOException)
         { error = ex is OperationCanceledException ? "操作取消或超时，请检查已有实例列表后再重试。" : ex.Message; }
@@ -138,10 +188,23 @@ else
     private async Task StartAsync()
     {
         if (created is null) return;
-        busy = true; error = null;
-        try { await Provisioner.StartAsync(created, ProgressAsync, lifetime.Token); Navigation.NavigateTo("/"); }
+        busy = true; error = null; phase = "正在读取新实例状态…"; confirmDismiss = false;
+        try { await Provisioner.StartAsync(created, ProgressAsync, lifetime.Token); completed = true; }
         catch (Exception ex) when (ex is EngineException or ArgumentException or OperationCanceledException or IOException)
         { error = ex is OperationCanceledException ? "启动等待已取消，游戏可能仍在运行，请到服务器页面检查。" : ex.Message; }
+        finally { busy = false; }
+    }
+    private async Task DismissAsync()
+    {
+        if (created is null || busy || !confirmDismiss) return;
+        busy = true; error = null;
+        try
+        {
+            await Provisioner.DismissPendingAsync(created.InstanceId, lifetime.Token);
+            confirmDismiss = false;
+            await LoadAsync(suggestPort: true);
+        }
+        catch (Exception ex) when (ex is EngineException or OperationCanceledException or IOException) { error = ex.Message; }
         finally { busy = false; }
     }
     private async Task SwitchAsync()

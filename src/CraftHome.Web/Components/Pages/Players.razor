@@ -1,0 +1,191 @@
+@page "/players"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Owner")]
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@using CraftHome.Web.Services
+@inject PlayerAccessService Access
+@inject AuthMeInstaller AuthMe
+
+<PageTitle>玩家管理 · CraftHome</PageTitle>
+<div class="page-heading">
+    <div><h1>玩家管理</h1><p>@(report is null ? "管理离线玩家白名单和游戏内登录" : $"{report.ServerName} · 管理离线玩家白名单和游戏内登录")</p></div>
+    <button class="btn btn-outline-secondary" disabled="@(!interactive || busy)" @onclick="RefreshAsync">刷新</button>
+</div>
+@if (error is not null) { <div class="notice notice-error" role="alert">@error</div> }
+@if (message is not null) { <div class="notice notice-success" role="status">@message</div> }
+@if (loading) { <div class="server-panel" role="status">正在读取玩家设置…</div> }
+else if (report is { } players)
+{
+    <section class="server-panel" aria-labelledby="whitelist-heading">
+        <h2 id="whitelist-heading">白名单</h2>
+        <p class="panel-description">@(players.Offline ? "离线模式" : "正版验证") · @(players.WhitelistEnabled ? "白名单已开启" : "白名单未开启") · @players.Players.Length 位玩家</p>
+        @if (players.Offline && players.WhitelistEnabled)
+        {
+            <div class="management-form">
+                <label for="player-names">添加玩家</label>
+                <textarea id="player-names" class="form-control" rows="3" placeholder="JeRyan, PlayerTwo" aria-describedby="player-names-help" @bind="names" @bind:event="oninput" disabled="@(!CanEdit)"></textarea>
+                <p id="player-names-help" class="helper">逗号、空格或换行分隔。输入玩家实际使用的大小写。服务器运行时，保存后会发送白名单重载命令。</p>
+                <button class="btn btn-primary" disabled="@(!CanEdit || string.IsNullOrWhiteSpace(names))" @onclick="AddAsync">添加到白名单</button>
+            </div>
+        }
+        else { <p class="helper">这里可编辑开启白名单的离线服。正版玩家应通过 MCSManager 或游戏控制台按正版身份添加。</p> }
+        @if (players.Players.Length == 0) { <p class="list-empty">白名单中还没有玩家。</p> }
+        else
+        {
+            <ul class="record-list players-list">
+                @foreach (var player in players.Players)
+                {
+                    <li @key="player.Uuid"><strong>@player.Name</strong>
+                        @if (players.Offline && players.WhitelistEnabled)
+                        { <button class="btn btn-outline-danger btn-compact" disabled="@(!CanEdit)" @onclick="() => pendingRemove = player">移出白名单</button> }
+                    </li>
+                }
+            </ul>
+        }
+        @if (pendingRemove is { } remove)
+        {
+            <div class="confirmation confirmation-danger">
+                <p>将 <strong>@remove.Name</strong> 移出白名单。若服务器启用了强制白名单，在线玩家可能立即断开。</p>
+                <button class="btn btn-outline-secondary btn-compact" disabled="@busy" @onclick="() => pendingRemove = null">取消</button>
+                <button class="btn btn-danger btn-compact" disabled="@(!CanEdit)" @onclick="RemoveAsync">确认移出</button>
+            </div>
+        }
+    </section>
+    <section class="server-panel backup-panel" aria-labelledby="auth-heading">
+        <h2 id="auth-heading" tabindex="-1" @ref="authHeading">游戏内注册与登录</h2>
+        <div class="record-list auth-record">
+            <div class="record-row">
+                <div><strong>AuthMe</strong>
+                    <span class="state @(players.AuthMe == AuthMeState.Installed ? "state-running" : "")">
+                        @(players.AuthMe switch { AuthMeState.Installed => "已安装", AuthMeState.Archived => "已卸载 · 可恢复", AuthMeState.External => "需检查文件", _ => "未安装" })
+                    </span>
+                </div>
+                @if (players.AuthMe == AuthMeState.Installed)
+                {
+                    <button class="btn btn-outline-danger" disabled="@(!CanManageAuth || confirmUninstall)" @ref="uninstallTrigger" @onclick="AskUninstall">卸载 AuthMe</button>
+                }
+                else if (players.AuthMe == AuthMeState.Archived)
+                {
+                    <button class="btn btn-primary" disabled="@(!CanManageAuth || !CanInstallAuth)" @onclick="RestoreAsync">@(busy ? "正在恢复…" : "恢复 AuthMe")</button>
+                }
+                else if (players.AuthMe == AuthMeState.NotInstalled)
+                {
+                    <button class="btn btn-primary" disabled="@(!CanManageAuth || !CanInstallAuth)" @onclick="InstallAsync">@(busy ? "正在安装…" : "安装 AuthMe")</button>
+                }
+            </div>
+        </div>
+        @if (players.AuthMe == AuthMeState.Installed)
+        {
+            <p class="helper">玩家通过白名单后按游戏提示注册或登录，也可使用 <code>/register 密码 确认密码</code> 和 <code>/login 密码</code>。首次启动可能需要下载依赖，请在日志中确认插件已启用。</p>
+            @if (confirmUninstall)
+            {
+                <div class="confirmation confirmation-danger" @onkeydown="CancelOnEscape">
+                    <p><strong>卸载后，离线玩家下次进服将不再验证游戏密码。</strong> 插件会移出加载目录，现有账号、配置和白名单会保留。</p>
+                    <button class="btn btn-outline-secondary btn-compact" disabled="@busy" @ref="cancelUninstall" @onclick="CancelUninstall">取消</button>
+                    <button class="btn btn-danger btn-compact" disabled="@(!CanManageAuth)" @onclick="UninstallAsync">@(busy ? "正在卸载…" : "确认卸载")</button>
+                </div>
+            }
+        }
+        else if (players.AuthMe == AuthMeState.Archived)
+        {
+            <p class="helper">AuthMe 已移出插件加载目录。恢复后，下次开服会重新加载原插件并继续使用原有账号和配置。</p>
+        }
+        else if (players.AuthMe == AuthMeState.External)
+        {
+            <p class="helper">发现其他版本的 AuthMe、残留配置或冲突文件。请在 MCSManager 核对现有文件。</p>
+        }
+        else
+        {
+            <p class="helper">为已经启动过的 Paper 1.21.11 离线服安装 AuthMe 6.0.1。需要先添加白名单玩家并正常停服。</p>
+        }
+        @if (players.AuthMe != AuthMeState.External)
+        {
+            @if (players.Status != 0) { <p class="helper">安装、卸载和恢复前请先正常停服。 <a href="/">查看服务器</a></p> }
+            else if (players.FileTasks > 0) { <p class="helper">管理引擎正在处理文件，完成后请刷新。</p> }
+            else if (players.AuthMe != AuthMeState.Installed && !CanInstallAuth) { <p class="helper">请启用离线模式和白名单，并至少添加一位玩家。</p> }
+        }
+    </section>
+}
+else if (error is null)
+{
+    <section class="server-panel"><h2>请先连接一台服务器</h2><p>连接后可以查看和维护玩家名单。</p><a href="create" class="btn btn-primary">新手开服</a></section>
+}
+
+@code {
+    private PlayerAccessReport? report;
+    private WhitelistPlayer? pendingRemove;
+    private string names = "";
+    private string? error, message;
+    private bool loading = true, busy, interactive, confirmUninstall, focusUninstallPrompt, restoreUninstallFocus;
+    private ElementReference uninstallTrigger, cancelUninstall, authHeading;
+    private bool CanEdit => interactive && !busy && report is { Offline: true, WhitelistEnabled: true, Status: 0 or 3, FileTasks: 0 };
+    private bool CanManageAuth => interactive && !busy && report is { Status: 0, FileTasks: 0 };
+    private bool CanInstallAuth => report is { Offline: true, WhitelistEnabled: true, Players.Length: > 0 };
+
+    protected override Task OnInitializedAsync() => RefreshAsync();
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) { interactive = true; StateHasChanged(); }
+        if (focusUninstallPrompt) { focusUninstallPrompt = false; await cancelUninstall.FocusAsync(); }
+        if (restoreUninstallFocus) { restoreUninstallFocus = false; await uninstallTrigger.FocusAsync(); }
+    }
+
+    private async Task RefreshAsync()
+    {
+        busy = true; error = null; message = null; pendingRemove = null; confirmUninstall = false;
+        try { report = await Access.InspectAsync(); }
+        catch (EngineException ex) { report = null; error = ex.Message; }
+        finally { busy = false; loading = false; }
+    }
+
+    private Task AddAsync() => !CanEdit ? Task.CompletedTask : RunAsync(async selection =>
+    {
+        var result = await Access.AddAsync(selection, names);
+        names = "";
+        return result;
+    });
+
+    private Task RemoveAsync() => !CanEdit ? Task.CompletedTask : RunAsync(async selection =>
+    {
+        if (pendingRemove is not { } player) return "请选择一位玩家。";
+        var result = await Access.RemoveAsync(selection, player.Uuid);
+        pendingRemove = null;
+        return result;
+    });
+
+    private Task InstallAsync() => !CanManageAuth || !CanInstallAuth ? Task.CompletedTask : RunAsync(async selection =>
+    {
+        await AuthMe.InstallAsync(selection);
+        return "AuthMe 已安装。请启动服务器并确认插件正常启用。";
+    });
+
+    private void AskUninstall() { confirmUninstall = true; focusUninstallPrompt = true; }
+    private void CancelUninstall() { confirmUninstall = false; restoreUninstallFocus = true; }
+    private void CancelOnEscape(KeyboardEventArgs args) { if (args.Key == "Escape" && !busy) CancelUninstall(); }
+
+    private Task UninstallAsync() => !CanManageAuth || !confirmUninstall ? Task.CompletedTask : RunAsync(async selection =>
+    {
+        await AuthMe.SetInstalledAsync(selection, installed: false);
+        confirmUninstall = false;
+        await authHeading.FocusAsync();
+        return "AuthMe 已卸载，现有账号和配置已保留。";
+    });
+
+    private Task RestoreAsync() => !CanManageAuth || !CanInstallAuth ? Task.CompletedTask : RunAsync(async selection =>
+    {
+        await AuthMe.SetInstalledAsync(selection, installed: true);
+        await authHeading.FocusAsync();
+        return "AuthMe 已恢复。请在下次启动后确认插件正常启用。";
+    });
+
+    private async Task RunAsync(Func<string, Task<string>> action)
+    {
+        if (busy || report is null) return;
+        var selection = report.Selection;
+        busy = true; message = null; error = null;
+        try { message = await action(selection); report = await Access.InspectAsync(); }
+        catch (Exception ex) when (ex is EngineException or ArgumentException) { error = ex.Message; }
+        catch (IOException) { error = "无法写入暂存目录。请检查磁盘空间。"; }
+        finally { busy = false; }
+    }
+}

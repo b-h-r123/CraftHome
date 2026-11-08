@@ -1,13 +1,27 @@
 @inherits LayoutComponentBase
+@inject NavigationManager Navigation
 
+<a class="skip-link" href="@(Navigation.Uri.Split('#')[0] + "#main-content")" data-enhance-nav="false">跳到主要内容</a>
+<div class="app-shell">
 <header class="site-header">
-    <a class="brand" href="/"><span class="brand-mark">C</span><span>CraftHome<small>我的世界 · 开服控制台</small></span></a>
-    <nav aria-label="主导航">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">C</span><span>CraftHome<small>我的世界开服控制台</small></span></a>
+    <AuthorizeView Roles="Owner">
+        <Authorized>
+            <nav aria-label="主导航">
+                <NavLink href="/" Match="NavLinkMatch.All"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M8 6h.01M8 12h.01M8 18h.01"/></svg>服务器</NavLink>
+                <NavLink href="/worlds"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>地图与存档</NavLink>
+                <NavLink href="/players"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><path d="M3 20v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2M16 4a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 5v2"/></svg>玩家管理</NavLink>
+                <NavLink href="/create"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 6c-3-2-6-2-9-1v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v14"/></svg>新手开服</NavLink>
+                <NavLink href="/settings"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m10 13 4-4m-6 7-2 2a3 3 0 0 1-4-4l4-4a3 3 0 0 1 4 0m4 4a3 3 0 0 0 4 0l4-4a3 3 0 0 0-4-4l-2 2" transform="translate(0 1)"/></svg>连接设置</NavLink>
+            </nav>
+        </Authorized>
+    </AuthorizeView>
+    <div class="account-actions">
+        <button class="nav-button theme-button" type="button" data-theme-toggle aria-pressed="false">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20.9 13.3A8.5 8.5 0 0 1 10.7 3.1 8.5 8.5 0 1 0 20.9 13.3Z"/></svg>暗色模式
+        </button>
         <AuthorizeView Roles="Owner">
             <Authorized>
-                <NavLink href="/" Match="NavLinkMatch.All">服务器</NavLink>
-                <NavLink href="/settings">连接设置</NavLink>
-                <NavLink href="/create">新手开服</NavLink>
                 <a href="Account/Manage/ChangePassword">修改密码</a>
                 <form action="Account/Logout" method="post">
                     <AntiforgeryToken />
@@ -16,8 +30,9 @@
                 </form>
             </Authorized>
         </AuthorizeView>
-    </nav>
+    </div>
 </header>
-<main class="workspace">@Body</main>
-<footer class="site-footer">CraftHome v0.2 · 基于 MCSManager 管理引擎</footer>
+<main class="workspace" id="main-content" tabindex="-1">@Body</main>
+<footer class="site-footer">CraftHome v0.5 · 基于 MCSManager 管理引擎</footer>
+</div>
 <div id="blazor-error-ui" data-nosnippet>连接已中断或页面发生错误。<a href="." class="reload">重新加载</a></div>

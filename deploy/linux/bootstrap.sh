@@ -139,7 +139,8 @@ for attempt in {1..60}; do
   if curl --fail --silent http://127.0.0.1:5080/healthz; then
     echo
     echo '安装完成。通过现有公网入口或 SSH 隧道登录，点击“新手开服”。'
-    echo '首次账号信息：sudo cat /var/lib/crafthome/first-login.txt'
+    echo '默认登录邮箱：owner@crafthome.local'
+    echo '全新安装的初始密码：sudo cat /var/lib/crafthome/first-login.txt'
     echo '新安装默认只监听本机；公网访问请按 README 配置，云安全组需另行放行。'
     exit 0
   fi

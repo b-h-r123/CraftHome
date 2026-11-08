@@ -2,18 +2,43 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace CraftHome.Web.Services;
 
 public sealed record CreateServerOptions(string Name, string Version, int Port, int MemoryMiB, string PublicHost,
     bool OfflineMode, string PlayerName, bool AcceptEula);
-public sealed record CreatedServer(string InstanceId, string Name, string Address, int Port, int MemoryMiB, string Version, int Build);
+public sealed record CreatedServer(string InstanceId, string Name, string Address, int Port, int MemoryMiB, string Version, int Build, bool OfflineMode = false);
 
 public sealed class ServerProvisioner(ConnectionStore connections, McsManagerClient engine, PaperCatalog catalog,
-    IHostInspector inspector)
+    IHostInspector inspector, InstanceOperations operations, RuntimePaths paths)
 {
-    private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly SemaphoreSlim gate = operations.Gate;
+    private readonly string checkpointPath = Path.Combine(paths.DataDirectory, "first-start.json");
+    private sealed record FirstStartCheckpoint(string BaseUrl, string DaemonId, CreatedServer Server);
+
+    private async Task<FirstStartCheckpoint?> ReadCheckpointAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var input = new FileStream(checkpointPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            return await JsonSerializer.DeserializeAsync<FirstStartCheckpoint>(input, cancellationToken: ct);
+        }
+        catch (FileNotFoundException) { return null; }
+        catch (JsonException) { throw new EngineException("无法读取上次开服进度，请在服务器页面检查已有实例。"); }
+    }
+
+    public async Task<CreatedServer?> GetPendingAsync(CancellationToken ct = default)
+        => (await ReadCheckpointAsync(ct))?.Server;
+
+    public async Task DismissPendingAsync(string instanceId, CancellationToken ct = default)
+    {
+        if (!await gate.WaitAsync(0, ct)) throw new EngineException("向导正在处理另一个操作，请稍后重试。");
+        try
+        {
+            if ((await ReadCheckpointAsync(ct))?.Server.InstanceId == instanceId) File.Delete(checkpointPath);
+        }
+        finally { gate.Release(); }
+    }
 
     public async Task<ConnectionSettings> GetEngineAsync(CancellationToken ct = default)
     {
@@ -35,6 +60,7 @@ public sealed class ServerProvisioner(ConnectionStore connections, McsManagerCli
         string? instanceId = null;
         try
         {
+            if (await ReadCheckpointAsync(ct) is not null) throw new EngineException("已有待首次启动的实例，请刷新向导并继续该进度。");
             await progress("检查本机引擎、内存、磁盘与端口…");
             var connection = await GetEngineAsync(ct);
             await EnsureResourcesAsync(options.Port, options.MemoryMiB, ct);
@@ -61,10 +87,17 @@ public sealed class ServerProvisioner(ConnectionStore connections, McsManagerCli
             await engine.UploadJarAsync(target, file, ct);
             await progress("写入端口、玩家模式和已确认的 EULA…");
             await engine.WriteFileAsync(target, "/server.properties", Properties(options), ct);
-            var whitelist = options.OfflineMode ? new[] { new { uuid = OfflineUuid(options.PlayerName), name = options.PlayerName } } : [];
+            var whitelist = options.OfflineMode ? PlayerAccessService.ParseNames(options.PlayerName).Select(PlayerAccessService.OfflinePlayer).ToArray() : [];
             await engine.WriteFileAsync(target, "/whitelist.json", JsonSerializer.Serialize(whitelist), ct);
             await engine.WriteFileAsync(target, "/eula.txt", "# Explicitly accepted in CraftHome creation wizard\neula=true\n", ct);
-            var result = new CreatedServer(instanceId, options.Name.Trim(), Address(options.PublicHost, options.Port), options.Port, options.MemoryMiB, build.Version, build.Number);
+            var result = new CreatedServer(instanceId, options.Name.Trim(), Address(options.PublicHost, options.Port), options.Port, options.MemoryMiB, build.Version, build.Number, options.OfflineMode);
+            var stagedCheckpoint = checkpointPath + ".tmp";
+            try
+            {
+                await File.WriteAllTextAsync(stagedCheckpoint, JsonSerializer.Serialize(new FirstStartCheckpoint(connection.BaseUrl, connection.DaemonId, result)), CancellationToken.None);
+                File.Move(stagedCheckpoint, checkpointPath, overwrite: true);
+            }
+            catch (IOException) { throw new EngineException("实例已创建，但面板无法保存首次启动进度。"); }
             await progress("创建完成。点击“首次启动并管理”后才会启动游戏；原实例已保留。");
             return result;
         }
@@ -81,21 +114,33 @@ public sealed class ServerProvisioner(ConnectionStore connections, McsManagerCli
         try
         {
             var connection = await GetEngineAsync(ct);
+            var checkpoint = await ReadCheckpointAsync(ct);
+            if (checkpoint is null || checkpoint.Server != server)
+                throw new EngineException("首次启动进度已变化，请刷新向导。");
+            if (checkpoint.BaseUrl != connection.BaseUrl || checkpoint.DaemonId != connection.DaemonId)
+                throw new EngineException("这个实例属于原管理节点。请切回原节点，或结束向导并保留实例。");
             var target = connection with { InstanceId = server.InstanceId, Name = server.Name, Address = server.Address };
             var snapshot = await engine.GetSnapshotAsync(target, ct);
             if (snapshot.Status == 0)
             {
+                if (snapshot.FileTasks > 0) throw new EngineException("服务器还有文件任务正在运行，请等待完成再启动。");
                 await EnsureResourcesAsync(server.Port, server.MemoryMiB, ct);
-                await progress("启动 Java，首次启动可能下载依赖并生成世界，请保持页面打开…");
+                await progress("正在启动 Java。首次启动可能下载依赖并生成地图…");
                 await engine.ControlAsync(target, "start", ct);
             }
-            await connections.SaveAsync(target, ct);
+            if (connections.Read() != target) await connections.SaveAsync(target, CancellationToken.None);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromMinutes(4));
             try
             {
                 while (true)
                 {
+                    if (snapshot.Status == 3 && snapshot.GameResponding)
+                    {
+                        File.Delete(checkpointPath);
+                        await progress("游戏已响应。接下来请从另一网络验证玩家连接地址。");
+                        return;
+                    }
                     await Task.Delay(TimeSpan.FromSeconds(2), timeout.Token);
                     try { snapshot = await engine.GetSnapshotAsync(target, timeout.Token); }
                     catch (EngineException ex) when (ex.IsTransient)
@@ -103,8 +148,8 @@ public sealed class ServerProvisioner(ConnectionStore connections, McsManagerCli
                         await progress("管理引擎暂时未响应，正在等待游戏就绪…");
                         continue;
                     }
-                    if (snapshot.Status == 3 && snapshot.GameResponding) { await progress("游戏查询已响应，可以进入管理页面。"); return; }
                     if (snapshot.Status == 0) throw new EngineException("游戏在准备完成前退出。已切换到新实例，请到服务器页面查看日志。");
+                    if (snapshot.Status == 3 && !snapshot.GameResponding) await progress("游戏进程已启动，正在等待游戏响应…");
                 }
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -129,7 +174,7 @@ public sealed class ServerProvisioner(ConnectionStore connections, McsManagerCli
         if (options.Port is < 1024 or > 65535) throw new ArgumentException("游戏端口需在 1024–65535 之间。");
         if (options.MemoryMiB is < 512 or > 16384 || options.MemoryMiB % 128 != 0) throw new ArgumentException("内存需为 512–16384 MiB，且是 128 的倍数。");
         if (options.PublicHost.Length > 253 || Uri.CheckHostName(options.PublicHost) == UriHostNameType.Unknown || options.PublicHost.Any(char.IsWhiteSpace)) throw new ArgumentException("请填写不含端口的服务器公网 IP 或域名。");
-        if (options.OfflineMode && !Regex.IsMatch(options.PlayerName, "^[A-Za-z0-9_]{3,16}$")) throw new ArgumentException("离线模式需填写 3–16 位英文、数字或下划线玩家名，并加入白名单。");
+        if (options.OfflineMode) PlayerAccessService.ParseNames(options.PlayerName);
     }
 
     public static string Address(string host, int port) => host.Contains(':') ? $"[{host}]:{port}" : $"{host}:{port}";

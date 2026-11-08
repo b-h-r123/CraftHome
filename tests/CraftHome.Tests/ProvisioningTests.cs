@@ -39,11 +39,17 @@ public sealed class ProvisioningTests : IDisposable
                 _ => EngineResponse("{\"status\":3,\"info\":{\"mcPingOnline\":true}}")
             };
         })));
-        var service = new ServerProvisioner(store, engine, factory.Services.GetRequiredService<PaperCatalog>(), new StubHost());
-        await service.StartAsync(new("new", "New server", "example.com:25566", 25566, 512, "1.21.11", 132), _ => Task.CompletedTask);
+        var paths = factory.Services.GetRequiredService<RuntimePaths>();
+        var pending = new CreatedServer("new", "New server", "example.com:25566", 25566, 512, "1.21.11", 132);
+        await File.WriteAllTextAsync(Path.Combine(paths.DataDirectory, "first-start.json"),
+            JsonSerializer.Serialize(new { store.Read().BaseUrl, store.Read().DaemonId, Server = pending }));
+        var service = new ServerProvisioner(store, engine, factory.Services.GetRequiredService<PaperCatalog>(), new StubHost(), new InstanceOperations(), paths);
+        Assert.Equal(pending, await service.GetPendingAsync());
+        await service.StartAsync(pending, _ => Task.CompletedTask);
         Assert.Equal(1, starts);
         Assert.Equal(3, queries);
         Assert.Equal("new", store.Read().InstanceId);
+        Assert.Null(await service.GetPendingAsync());
     }
 
     private static HttpResponseMessage EngineResponse(string data) => new(HttpStatusCode.OK)
@@ -73,7 +79,8 @@ public sealed class ProvisioningTests : IDisposable
             if (request.Method != HttpMethod.Get) mutations++;
             return new(HttpStatusCode.OK) { Content = new StringContent("{\"status\":200,\"data\":[{\"uuid\":\"daemon\",\"ip\":\"127.0.0.1\",\"available\":true}]}") };
         })));
-        var service = new ServerProvisioner(store, engine, factory.Services.GetRequiredService<PaperCatalog>(), new StubHost(reason));
+        var service = new ServerProvisioner(store, engine, factory.Services.GetRequiredService<PaperCatalog>(), new StubHost(reason), new InstanceOperations(),
+            factory.Services.GetRequiredService<RuntimePaths>());
         var error = await Assert.ThrowsAsync<EngineException>(() => service.CreateAsync(Valid, _ => Task.CompletedTask));
         Assert.Contains(reason, error.Message);
         Assert.Equal(0, mutations);
@@ -173,6 +180,59 @@ public sealed class ProvisioningTests : IDisposable
         var engine = new McsManagerClient(new HttpClient(new Handler(_ => new(HttpStatusCode.OK) { Content = new StringContent(passport) })));
         await engine.UploadJarAsync(new(false, "http://127.0.0.1:23333", "test-key", "daemon", "instance"), file);
         Assert.True(received);
+    }
+
+    [Fact]
+    public async Task CreatingAnInstancePersistsItsProgressAndPreventsDuplicateCreationUntilDismissed()
+    {
+        using var factory = Factory();
+        var paths = factory.Services.GetRequiredService<RuntimePaths>();
+        var store = factory.Services.GetRequiredService<ConnectionStore>();
+        await store.SaveAsync(new(false, "http://127.0.0.1:23333", "test-key", "daemon", "existing"));
+        var builder = WebApplication.CreateBuilder();
+        builder.Logging.ClearProviders();
+        builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
+        await using var receiver = builder.Build();
+        receiver.MapPost("/upload/test-passport", () => "OK");
+        await receiver.StartAsync();
+        var bytes = Encoding.UTF8.GetBytes("paper");
+        var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var downloads = Path.Combine(paths.DataDirectory, "downloads");
+        Directory.CreateDirectory(downloads);
+        await File.WriteAllBytesAsync(Path.Combine(downloads, sha + ".jar"), bytes);
+        using var catalog = new PaperCatalog(new HttpClient(new Handler(_ => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""[{"id":132,"channel":"STABLE","downloads":{"server:default":{"url":"https://fill-data.papermc.io/paper.jar","checksums":{"sha256":"SHA256"},"size":5}}}]""".Replace("SHA256", sha, StringComparison.Ordinal))
+        })), paths);
+        const string newId = "0123456789abcdef0123456789abcdef";
+        var creates = 0;
+        using var engine = new McsManagerClient(new HttpClient(new Handler(request =>
+        {
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/api/service/remote_services_list" => EngineResponse("""[{"uuid":"daemon","ip":"127.0.0.1","available":true}]"""),
+                "/api/service/remote_service_instances" => EngineResponse("""{"data":[]}"""),
+                "/api/instance" when request.Method == HttpMethod.Post => EngineResponse(JsonSerializer.Serialize(new { instanceUuid = CreateId() })),
+                "/api/files/upload" => EngineResponse(JsonSerializer.Serialize(new { password = "test-passport", addr = receiver.Urls.Single() })),
+                "/api/files/touch" or "/api/files/" => EngineResponse("true"),
+                _ => throw new InvalidOperationException("Unexpected request " + request.RequestUri.AbsolutePath)
+            };
+        })));
+        string CreateId() { creates++; return newId; }
+        var service = new ServerProvisioner(store, engine, catalog, new StubHost(), new InstanceOperations(), paths);
+        var created = await service.CreateAsync(Valid, _ => Task.CompletedTask);
+        var reopened = new ServerProvisioner(store, engine, catalog, new StubHost(), new InstanceOperations(), paths);
+        Assert.Equal(created, await reopened.GetPendingAsync());
+        await Assert.ThrowsAsync<EngineException>(() => reopened.CreateAsync(Valid, _ => Task.CompletedTask));
+        Assert.Equal(1, creates);
+        Assert.Equal("existing", store.Read().InstanceId);
+        await store.SaveAsync(store.Read() with { BaseUrl = "http://localhost:23333" });
+        var mismatch = await Assert.ThrowsAsync<EngineException>(() => reopened.StartAsync(created, _ => Task.CompletedTask));
+        Assert.Contains("原管理节点", mismatch.Message);
+        await reopened.DismissPendingAsync("another-instance");
+        Assert.Equal(created, await reopened.GetPendingAsync());
+        await reopened.DismissPendingAsync(newId);
+        Assert.Null(await reopened.GetPendingAsync());
     }
 
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler

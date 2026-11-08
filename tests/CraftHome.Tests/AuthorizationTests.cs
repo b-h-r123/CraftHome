@@ -20,6 +20,8 @@ public sealed class AuthorizationTests : IDisposable
     [InlineData("/")]
     [InlineData("/settings")]
     [InlineData("/create")]
+    [InlineData("/worlds")]
+    [InlineData("/players")]
     public async Task AnonymousVisitorCannotAccessControls(string path)
     {
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
@@ -67,6 +69,19 @@ public sealed class AuthorizationTests : IDisposable
             ["Input.Email"] = "owner@crafthome.local", ["Input.Password"] = "invalid"
         }));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task LoginShowsTheDefaultEmailAndPasswordFileLocationWithoutExposingThePassword()
+    {
+        using var client = factory.CreateClient();
+        var html = await client.GetStringAsync("/Account/Login");
+        var credentials = await File.ReadAllLinesAsync(Path.Combine(directory, "first-login.txt"));
+        const string passwordPrefix = "密码：";
+        var password = credentials.Single(line => line.StartsWith(passwordPrefix, StringComparison.Ordinal))[passwordPrefix.Length..];
+        Assert.Contains($"value=\"{CraftHome.Web.Services.OwnerBootstrap.Email}\"", html);
+        Assert.Contains("/var/lib/crafthome/first-login.txt", html);
+        Assert.DoesNotContain(password, html);
     }
 
     [Fact]

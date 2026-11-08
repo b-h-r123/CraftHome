@@ -1,0 +1,292 @@
+@page "/worlds"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Owner")]
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@using CraftHome.Web.Services
+@inject WorldService WorldManager
+
+<PageTitle>地图与存档 · CraftHome</PageTitle>
+<div class="page-heading">
+    <div><h1>地图与存档</h1><p>@(report is null ? "管理已有地图和本机备份" : $"{report.ServerName} · 管理已有地图和本机备份")</p></div>
+    <button class="btn btn-outline-secondary refresh-button" disabled="@(!interactive || busy)" @onclick="RefreshAsync">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v5h-5M4 20v-5h5M20 9a8 8 0 0 0-13-3L4 9m16 6-3 3a8 8 0 0 1-13-3" /></svg>刷新
+    </button>
+</div>
+@if (error is not null) { <div class="notice notice-error" role="alert">@error</div> }
+@if (status is not null) { <div class="notice notice-success" role="status">@status</div> }
+@if (loading)
+{
+    <div class="server-panel" role="status">正在读取地图、存档和磁盘…</div>
+}
+else if (report is null)
+{
+    @if (error is null)
+    {
+        <section class="server-panel"><h2>还没有可管理的地图</h2><p>先创建或连接一台真实的 Minecraft Java 服务器。</p><a href="create" class="btn btn-primary">新手开服</a> <a href="settings" class="btn btn-outline-secondary">连接已有服务器</a></section>
+    }
+}
+else
+{
+    <div class="notice">
+        @if (report.ChangeBlocker is { } blocker) { @blocker <text> </text><a href="/">查看服务器</a> }
+        else { <text>服务器已停止，可以管理地图。移入回收站的地图可恢复。</text> }
+    </div>
+    <div class="world-grid">
+        <section class="server-panel world-panel" aria-labelledby="world-list-heading">
+            <div class="panel-heading"><h2 id="world-list-heading" tabindex="-1" @ref="mapHeading">地图</h2>
+                <button class="btn btn-primary btn-compact" disabled="@(!CanChange || report.Disk is null)" @onclick="() => importing = !importing">导入地图</button>
+            </div>
+            <p class="panel-description">切换后，下次启动会加载选中的地图。重置当前地图会先保留旧档，再于下次启动生成新地图。</p>
+            @if (report.ActiveWorld is { } missing && !report.Worlds.Any(world => world.Name == missing))
+            {
+                <p class="notice">当前没有 <strong>@missing</strong> 的存档。若继续开服，服务器会生成这张地图。</p>
+            }
+            @if (importing)
+            {
+                <div class="management-form">
+                    <label for="import-world-name">新地图名称</label>
+                    <input id="import-world-name" class="form-control" @bind="importName" @bind:event="oninput" maxlength="80" disabled="@busy" />
+                    <label for="import-world-zip">Java 地图 ZIP</label>
+                    <InputFile id="import-world-zip" class="form-control" accept=".zip,application/zip" OnChange="args => importFile = args.File" disabled="@busy" />
+                    <p class="helper">可选 Java 地图或 CraftHome 本机备份 ZIP。上传最多 128 MiB，解压后最多 1 GiB。导入会创建独立地图。</p>
+                    <button class="btn btn-primary btn-compact" disabled="@(!CanChange || importFile is null || string.IsNullOrWhiteSpace(importName))" @onclick="ImportAsync">确认导入</button>
+                    <button class="btn btn-outline-secondary btn-compact" disabled="@busy" @onclick="() => importing = false">取消</button>
+                </div>
+            }
+            @if (report.Worlds.Length == 0)
+            {
+                <p class="list-empty">还没有地图。可以导入 ZIP，也可以首次启动生成地图。</p>
+            }
+            else
+            {
+                <div class="record-list">
+                    <table class="world-table">
+                        <thead><tr><th scope="col">地图名称</th><th scope="col">操作</th></tr></thead>
+                        <tbody>
+                            @foreach (var world in report.Worlds)
+                            {
+                                var isCurrent = world.Name == report.ActiveWorld;
+                                <tr @key="world.Name">
+                                    <th scope="row"><span class="world-name">@world.Name</span>
+                                        @if (isCurrent) { <span class="world-current">当前地图</span> }
+                                    </th>
+                                    <td>
+                                        <div class="world-actions">
+                                            @if (isCurrent)
+                                            {
+                                                <button class="btn btn-outline-danger btn-compact" disabled="@(!CanChange)" @onclick='() => AskWorld(world.Name, "reset")'>重置当前地图</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-outline-secondary btn-compact" disabled="@(!CanChange)" @onclick='() => AskWorld(world.Name, "switch")'>切换地图</button>
+                                                <button class="btn btn-outline-danger btn-compact" disabled="@(!CanChange)" @onclick='() => AskWorld(world.Name, "trash")'>移入回收站</button>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                                @if (pendingWorld == world.Name)
+                                {
+                                    <tr class="prompt-row"><td colspan="2">
+                                        <div class="confirmation @(worldAction == "switch" ? "" : "confirmation-danger")" @onkeydown="args => CancelOnEscapeAsync(args, false)">
+                                            @if (worldAction == "reset") { <p><strong>@world.Name</strong> 及其配套维度会移入回收站。下次启动会生成一张同名新地图。若要直接恢复旧档，请在再次启动前操作。</p> }
+                                            else if (worldAction == "trash") { <p><strong>@world.Name</strong> 及其配套维度会移入回收站，之后可以恢复。</p> }
+                                            else { <p>下次启动将加载 <strong>@world.Name</strong>，原地图会保留。</p> }
+                                            <button class="btn btn-outline-secondary btn-compact" disabled="@busy" @ref="promptFocus" @onclick="() => ClosePromptAsync(false)">取消</button>
+                                            <button class="btn @(worldAction == "switch" ? "btn-primary" : "btn-danger") btn-compact" disabled="@(!CanChange)" @onclick="ChangeWorldAsync">@(busy ? "正在处理…" : worldAction == "reset" ? "确认重置" : worldAction == "trash" ? "确认移入" : "确认切换")</button>
+                                        </div>
+                                    </td></tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+        <section class="server-panel disk-panel" aria-labelledby="disk-heading">
+            <h2 id="disk-heading">磁盘占用</h2>
+            @if (report.Disk is { } disk)
+            {
+                <p class="disk-value"><strong>@Size(disk.UsedBytes)</strong> / @Size(disk.TotalBytes)</p>
+                <progress class="disk-meter" value="@disk.PercentUsed" max="100" aria-label="实例所在磁盘的使用率"></progress>
+                <p class="disk-caption">可用 @Size(disk.AvailableBytes)</p>
+            }
+            else { <p class="panel-description disk-caption">当前管理节点的磁盘数据不可用。</p> }
+            <dl class="disk-counts"><div><dt>地图</dt><dd>@report.Worlds.Length 个</dd></div><div><dt>备份</dt><dd>@report.Backups.Length 个</dd></div></dl>
+        </section>
+    </div>
+    <section class="server-panel backup-panel" aria-labelledby="backup-heading">
+        <div class="panel-heading">
+            <div><h2 id="backup-heading">本机备份</h2><p class="panel-description">备份文件保存在当前服务器的实例目录。</p></div>
+            <button class="btn btn-primary" disabled="@(!CanChange || report.Disk is null || !report.Worlds.Any(world => world.Name == report.ActiveWorld))" @onclick="BackupAsync">备份当前地图</button>
+        </div>
+        @if (report.Backups.Length == 0)
+        {
+            <p class="list-empty">还没有本机备份。</p>
+        }
+        else
+        {
+            <ul class="record-list backup-list" aria-label="已完成的本机备份">
+                @foreach (var backup in report.Backups)
+                {
+                    <li @key="backup.Name"><strong>@backup.Name</strong><span>@Size(backup.Bytes)</span><time datetime="@backup.CreatedAt.ToString("O")">@backup.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm zzz")</time></li>
+                }
+            </ul>
+        }
+    </section>
+    <section class="server-panel backup-panel" aria-labelledby="trash-heading">
+        <h2 id="trash-heading" tabindex="-1" @ref="trashHeading">地图回收站</h2>
+        <p class="panel-description">移入的地图仍占用磁盘，可恢复或永久删除。</p>
+        @if (report.Trash.Length == 0)
+        {
+            <p class="list-empty">回收站是空的。</p>
+        }
+        else
+        {
+            <ul class="record-list trash-list">
+                @foreach (var world in report.Trash)
+                {
+                    <li @key="world.Id">
+                        <div class="record-row"><strong>@world.Name</strong>
+                            <div class="world-actions">
+                                <button class="btn btn-outline-secondary btn-compact" disabled="@(!CanChange)" @onclick="() => RestoreAsync(world)">恢复地图</button>
+                                <button class="btn btn-outline-danger btn-compact" disabled="@(!CanChange)" @onclick="() => AskPurge(world)">永久删除</button>
+                            </div>
+                        </div>
+                        @if (pendingPurge?.Id == world.Id)
+                        {
+                            <div class="confirmation confirmation-danger purge-prompt" @onkeydown="args => CancelOnEscapeAsync(args, true)">
+                                <p id="purge-warning">永久删除后无法恢复。</p>
+                                <div class="purge-input">
+                                    <label for="purge-world-name">输入「@world.Name」确认</label>
+                                    <input id="purge-world-name" class="form-control" aria-describedby="purge-warning" autocomplete="off" @ref="promptFocus" @bind="purgeConfirmation" @bind:event="oninput" disabled="@busy" />
+                                </div>
+                                <button class="btn btn-outline-secondary btn-compact" disabled="@busy" @onclick="() => ClosePromptAsync(true)">取消</button>
+                                <button class="btn btn-danger btn-compact" disabled="@(!CanChange || purgeConfirmation != world.Name)" @onclick="PurgeAsync">@(busy ? "正在删除…" : "确认永久删除")</button>
+                            </div>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+}
+
+@code {
+    private WorldReport? report;
+    private string? pendingWorld, error, status;
+    private string worldAction = "switch", importName = "", purgeConfirmation = "";
+    private IBrowserFile? importFile;
+    private TrashedWorld? pendingPurge;
+    private ElementReference promptFocus, mapHeading, trashHeading;
+    private bool focusPrompt;
+    private bool loading = true, busy, interactive, importing;
+    private bool CanChange => interactive && !busy && report is { ChangeBlocker: null };
+
+    protected override Task OnInitializedAsync() => RefreshAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) { interactive = true; StateHasChanged(); }
+        if (focusPrompt)
+        {
+            focusPrompt = false;
+            await promptFocus.FocusAsync();
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        busy = true; error = null; status = null; pendingWorld = null; pendingPurge = null;
+        try { report = await WorldManager.InspectAsync(); }
+        catch (EngineException ex) { report = null; error = ex.Message; }
+        finally { loading = false; busy = false; }
+    }
+
+    private void AskWorld(string name, string action) { pendingPurge = null; pendingWorld = name; worldAction = action; focusPrompt = true; }
+    private void AskPurge(TrashedWorld world) { pendingWorld = null; pendingPurge = world; purgeConfirmation = ""; focusPrompt = true; }
+
+    private Task CancelOnEscapeAsync(KeyboardEventArgs args, bool purge) =>
+        args.Key == "Escape" && !busy ? ClosePromptAsync(purge) : Task.CompletedTask;
+
+    private async Task ClosePromptAsync(bool purge)
+    {
+        pendingWorld = null;
+        pendingPurge = null;
+        await (purge ? trashHeading : mapHeading).FocusAsync();
+    }
+
+    private async Task ChangeWorldAsync()
+    {
+        if (!CanChange || report is null || pendingWorld is not { } name) return;
+        var selection = report.Selection;
+        await RunAsync(async () =>
+        {
+            if (worldAction is "trash" or "reset")
+            {
+                var reset = worldAction == "reset";
+                await WorldManager.TrashAsync(selection, name, resetActive: reset);
+                await ClosePromptAsync(false);
+                return reset ? $"旧地图 {name} 已移入回收站，下次启动将生成新地图。" : $"已将 {name} 移入地图回收站。";
+            }
+            await WorldManager.SelectAsync(selection, name);
+            await ClosePromptAsync(false);
+            return $"已选择 {name}，下次启动将加载这张地图。";
+        });
+    }
+
+    private async Task ImportAsync()
+    {
+        if (!CanChange || report is null || importFile is not { } file) return;
+        if (!file.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || file.Size > WorldService.MaxImportBytes)
+        { error = "请选择不超过 128 MiB 的 ZIP 文件。"; return; }
+        var selection = report.Selection;
+        var name = importName.Trim();
+        status = "正在上传、检查并导入地图…";
+        await RunAsync(async () =>
+        {
+            await using var stream = file.OpenReadStream(WorldService.MaxImportBytes);
+            await WorldManager.ImportAsync(selection, name, stream);
+            importing = false; importName = ""; importFile = null;
+            return $"已导入 {name}，可以在地图列表中选择它。";
+        });
+    }
+
+    private async Task RestoreAsync(TrashedWorld world)
+    {
+        if (!CanChange || report is null) return;
+        var selection = report.Selection;
+        await RunAsync(async () => { await WorldManager.RestoreAsync(selection, world.Id); return $"已恢复 {world.Name}。"; });
+    }
+
+    private async Task PurgeAsync()
+    {
+        if (!CanChange || report is null || pendingPurge is not { } world) return;
+        var selection = report.Selection;
+        await RunAsync(async () =>
+        {
+            await WorldManager.PurgeAsync(selection, world.Id, purgeConfirmation);
+            await ClosePromptAsync(true);
+            return $"已永久删除 {world.Name}。";
+        });
+    }
+
+    private async Task BackupAsync()
+    {
+        if (!CanChange || report is null) return;
+        var selection = report.Selection;
+        status = "正在检查空间并备份地图。请等待任务完成。";
+        await RunAsync(async () => $"已完成本机备份：{await WorldManager.BackupAsync(selection)}");
+    }
+
+    private async Task RunAsync(Func<Task<string>> action)
+    {
+        busy = true; error = null;
+        try { status = await action(); report = await WorldManager.InspectAsync(); }
+        catch (EngineException ex) { status = null; error = ex.Message; }
+        catch (IOException) { status = null; error = "无法读取上传文件或写入暂存目录。请检查文件和可用磁盘空间。"; }
+        finally { busy = false; }
+    }
+
+    private static string Size(long bytes) => bytes >= 1024L * 1024 * 1024 ? $"{bytes / (1024d * 1024 * 1024):0.#} GiB"
+        : bytes >= 1024L * 1024 ? $"{bytes / (1024d * 1024):0.#} MiB" : $"{bytes / 1024d:0.#} KiB";
+}

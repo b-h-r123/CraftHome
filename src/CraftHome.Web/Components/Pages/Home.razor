@@ -6,7 +6,7 @@
 @inject ServerService Servers
 
 <PageTitle>服务器 · CraftHome</PageTitle>
-<div class="page-heading"><div><h1>服务器</h1><p>从这里开始，照顾好你和朋友的世界。</p></div><a class="btn btn-outline-secondary" href="settings">连接设置</a></div>
+<div class="page-heading"><div><h1>服务器</h1><p>查看运行状态，启动或停止当前服务器。</p></div><a class="btn btn-outline-secondary" href="worlds">地图与存档</a></div>
 @if (connection.ApiKey.Length > 0 && connection.InstanceId.Length == 0)
 {
     <div class="notice">管理引擎已准备好。<a href="create">打开新手开服向导，创建第一台服务器。</a></div>
@@ -22,9 +22,9 @@ else
     <div class="notice @(hasError ? "notice-error" : "notice-success")" role="status">@message</div>
 }
 <section class="server-panel" aria-label="服务器控制">
-    <div class="server-heading"><div><h2>@connection.Name</h2><p>@(connection.DemoMode ? "演示实例" : "玩家连接地址") · @connection.Address</p></div><span class="state @(snapshot?.Status == 3 ? "state-running" : "")">@(snapshot?.StatusText ?? "尚未获取状态")</span></div>
+    <div class="server-heading"><div><h2>@connection.Name</h2><p>@(connection.DemoMode ? "演示实例" : "Minecraft Java 版")</p></div><span class="state @(snapshot?.Status == 3 ? "state-running" : "")">@(snapshot?.StatusText ?? "尚未获取进程状态")</span></div>
     <div class="server-details">
-        <div><span>游戏响应</span><strong>@(connection.DemoMode ? "演示模式" : snapshot is null ? "待检查" : snapshot.GameResponding ? "查询已响应" : "未确认可连接")</strong></div>
+        <div><span>管理节点的游戏查询</span><strong>@GameStatus</strong></div>
         <div><span>进程内存</span><strong>@(snapshot?.MemoryBytes is long bytes ? $"{bytes / 1024 / 1024:N0} MB" : "—")</strong></div>
         <div><span>最近刷新</span><strong>@(lastRefresh?.ToString("HH:mm:ss") ?? "—")</strong></div>
     </div>
@@ -42,13 +42,39 @@ else
             <button class="btn btn-outline-secondary" disabled="@busy" @onclick="CancelConfirmation">取消</button>
         </div>
     }
-    <p class="helper">进程运行不等于游戏已就绪；游戏查询响应也不代表公网可达。提交操作后请刷新确认最终状态。</p>
+    <p class="helper">提交操作后，可刷新查看进程和游戏响应。</p>
 </section>
+@if (!connection.DemoMode)
+{
+    <section id="player-connection" class="server-panel join-panel" aria-labelledby="join-heading">
+        <div class="panel-heading"><h2 id="join-heading">邀请玩家加入</h2><span class="state">公网连通性待确认</span></div>
+        <label for="join-address">Minecraft Java 版连接地址</label>
+        <div class="join-address">
+            <input id="join-address" class="form-control" readonly value="@connection.Address" />
+            <button class="btn btn-outline-secondary" type="button" data-copy-address disabled="@string.IsNullOrWhiteSpace(connection.Address)">复制地址</button>
+        </div>
+        <div class="helper" role="status"></div>
+        @if (string.IsNullOrWhiteSpace(connection.Address) || HasLocalAddress)
+        {
+            <p class="notice">@(HasLocalAddress ? "当前显示的是本机地址。" : "还没有设置玩家连接地址。") 要邀请外网玩家，请在<a href="settings">连接设置</a>填写游戏服的公网 IP 或域名及端口。</p>
+        }
+        <p class="helper">把地址发给朋友，让对方从另一网络在游戏的「多人游戏 → 直接连接」里验证。</p>
+        <details class="join-help">
+            <summary>朋友进不来？逐步检查</summary>
+            <ol>
+                <li><strong>先看游戏查询。</strong>若服务器停止，先启动；若进程已运行但查询未响应，等待加载后刷新，并查看下方日志。</li>
+                <li><strong>核对地址和端口。</strong>朋友应输入上方的游戏地址，使用与服务端相同版本的 Minecraft Java 客户端。</li>
+                <li><strong>查询已响应，但外网连接超时或被拒绝。</strong>核对系统防火墙和云安全组是否允许游戏端口的入站 TCP，再从另一网络重试。</li>
+                <li><strong>游戏提示白名单或登录。</strong>到<a href="players">玩家管理</a>核对玩家名、准入设置及 AuthMe 状态。</li>
+            </ol>
+        </details>
+    </section>
+}
 <section class="log-section" aria-label="最近日志">
     <div class="section-heading"><h2>最近日志</h2><span>最多读取最近 16 KB · 手动刷新</span></div>
     <pre class="console" tabindex="0">@(logs.Length == 0 ? "暂无日志。" : logs)</pre>
 </section>
-<p class="helper">通过“新手开服”创建独立 Paper 实例，也可切换已有实例。插件安装与领地管理将在后续版本提供。</p>
+<p class="helper"><a href="create">新手开服</a>可以创建独立 Paper 服务器，也可以切换面板管理的实例。</p>
 }
 
 @code {
@@ -61,6 +87,14 @@ else
     private bool busy;
     private bool interactive;
     private DateTimeOffset? lastRefresh;
+    private bool HasLocalAddress => Uri.TryCreate("minecraft://" + connection.Address, UriKind.Absolute, out var address) && address.IsLoopback;
+    private string GameStatus => connection.DemoMode ? "演示模式" : snapshot switch
+    {
+        { Status: 0 } => "服务器已停止",
+        { Status: 3, GameResponding: true } => "游戏已响应",
+        { Status: 2 or 3 } => "等待游戏响应",
+        _ => "尚未确认游戏响应"
+    };
 
     protected override async Task OnInitializedAsync() => await RefreshAsync();
 

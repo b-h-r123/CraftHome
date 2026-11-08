@@ -1,8 +1,12 @@
 namespace CraftHome.Web.Services;
 
-public sealed class ServerService(ConnectionStore connections, McsManagerClient engine, ILogger<ServerService> logger)
+public sealed class InstanceOperations
 {
-    private readonly SemaphoreSlim controlGate = new(1, 1);
+    internal SemaphoreSlim Gate { get; } = new(1, 1);
+}
+
+public sealed class ServerService(ConnectionStore connections, McsManagerClient engine, ILogger<ServerService> logger, InstanceOperations operations)
+{
     private int demoStatus;
 
     public async Task<InstanceSnapshot> GetSnapshotAsync(CancellationToken ct = default)
@@ -24,17 +28,21 @@ public sealed class ServerService(ConnectionStore connections, McsManagerClient 
     {
         if (action is not ("start" or "stop" or "restart"))
             throw new ArgumentException("不支持的操作。", nameof(action));
-        if (!await controlGate.WaitAsync(0, ct))
-            throw new EngineException("另一个控制请求正在提交，请稍后刷新。");
+        if (!await operations.Gate.WaitAsync(0, ct))
+            throw new EngineException("另一个服务器操作正在进行，请稍后重试。");
         try
         {
             var connection = connections.Read();
             if (connection.DemoMode)
                 Volatile.Write(ref demoStatus, action == "stop" ? 0 : 3);
             else
+            {
+                if (action != "stop" && (await engine.GetSnapshotAsync(connection, ct)).FileTasks > 0)
+                    throw new EngineException("服务器还有文件任务正在运行，请等待完成再启动或重启。");
                 await engine.ControlAsync(connection, action, ct);
+            }
             logger.LogInformation("Server control submitted: {Action}; demo={Demo}", action, connection.DemoMode);
         }
-        finally { controlGate.Release(); }
+        finally { operations.Gate.Release(); }
     }
 }

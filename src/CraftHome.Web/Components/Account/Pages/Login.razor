@@ -3,6 +3,7 @@
 @using Microsoft.AspNetCore.Authentication
 @using Microsoft.AspNetCore.Identity
 @using CraftHome.Web.Data
+@using CraftHome.Web.Services
 @inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityRedirectManager RedirectManager
 
@@ -10,17 +11,18 @@
 <section class="login-panel">
     <h1>欢迎回到你的世界</h1>
     <p>登录服主账户，管理服务器。</p>
+    <p id="initial-account-help" class="helper">默认登录邮箱 <code>@OwnerBootstrap.Email</code>。这是本机登录标识，无需接收邮件。</p>
     @if (errorMessage is not null) { <div class="notice notice-error" role="alert">@errorMessage</div> }
     <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" FormName="login">
         <DataAnnotationsValidator />
         <ValidationSummary class="text-danger" role="alert" />
         <label for="email">邮箱</label>
-        <InputText @bind-Value="Input.Email" id="email" class="form-control" autocomplete="username" />
+        <InputText @bind-Value="Input.Email" id="email" class="form-control" autocomplete="username" aria-describedby="initial-account-help" />
         <label for="password">密码</label>
         <InputText type="password" @bind-Value="Input.Password" id="password" class="form-control" autocomplete="current-password" />
         <button type="submit" class="w-100 btn btn-primary mt-4">登录控制台</button>
     </EditForm>
-    <p class="helper">首次登录信息保存在服务端数据目录的 first-login.txt。此版本不开放公众注册。</p>
+    <p class="helper">初始密码保存在服务端的 <code>first-login.txt</code>。Linux 一键安装后，可在服务器终端运行 <code>sudo cat /var/lib/crafthome/first-login.txt</code> 查看。</p>
 </section>
 
 @code {
@@ -33,7 +35,10 @@
     {
         Input ??= new();
         if (HttpMethods.IsGet(HttpContext.Request.Method))
+        {
+            Input.Email = OwnerBootstrap.Email;
             await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
+        }
     }
 
     private async Task LoginUser()

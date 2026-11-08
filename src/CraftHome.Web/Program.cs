@@ -15,10 +15,14 @@ builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(P
 builder.Services.AddSingleton<ConnectionStore>();
 builder.Services.AddSingleton(new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
 {
-    Timeout = TimeSpan.FromSeconds(15), MaxResponseContentBufferSize = 1024 * 1024
+    Timeout = Timeout.InfiniteTimeSpan, MaxResponseContentBufferSize = 1024 * 1024
 });
 builder.Services.AddSingleton<McsManagerClient>();
+builder.Services.AddSingleton<InstanceOperations>();
 builder.Services.AddSingleton<ServerService>();
+builder.Services.AddSingleton<WorldService>();
+builder.Services.AddSingleton<PlayerAccessService>();
+builder.Services.AddSingleton<AuthMeInstaller>();
 builder.Services.AddSingleton<IHostInspector, HostInspector>();
 builder.Services.AddSingleton(service => new PaperCatalog(new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
     { Timeout = TimeSpan.FromMinutes(5), MaxResponseContentBufferSize = 2 * 1024 * 1024 }, service.GetRequiredService<RuntimePaths>()));
@@ -102,7 +106,7 @@ app.MapRazorComponents<App>()
 
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();
-app.MapGet("/healthz", () => Results.Ok(new { status = "ok", version = "0.2.0" }));
+app.MapGet("/healthz", () => Results.Ok(new { status = "ok", version = "0.5.0" }));
 
 app.Run();
 
